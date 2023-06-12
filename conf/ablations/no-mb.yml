@@ -1,0 +1,17 @@
+$include:
+  - conf/base.yml
+  - conf/1gpu.yml
+
+Discriminator.sample_rate: 44100
+Discriminator.fft_sizes: [2048, 1024, 512]
+Discriminator.bands:
+  - [0.0, 1.0]
+
+# re-weight lambdas to make up for
+# lost discriminators vs baseline
+lambdas:
+  mel/loss: 15.0
+  adv/feat_loss: 5.0
+  adv/gen_loss: 1.0
+  vq/commitment_loss: 0.25
+  vq/codebook_loss: 1.0

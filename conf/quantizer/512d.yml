@@ -1,0 +1,5 @@
+$include:
+  - conf/base.yml
+  - conf/1gpu.yml
+
+DAC.codebook_dim: 512

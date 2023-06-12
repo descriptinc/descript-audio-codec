@@ -1,0 +1,16 @@
+$include:
+  - conf/base.yml
+  - conf/1gpu.yml
+
+# Model setup
+DAC.sample_rate: 44100
+DAC.encoder_dim: 64
+DAC.encoder_rates: [2, 4, 4, 4]
+DAC.decoder_dim: 1536
+DAC.decoder_rates: [4, 4, 2, 2, 2, 1]
+
+# Quantization
+DAC.n_codebooks: 2
+DAC.codebook_size: 1024
+DAC.codebook_dim: 8
+DAC.quantizer_dropout: 1.0

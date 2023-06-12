@@ -1,0 +1,22 @@
+$include:
+  - conf/base.yml
+  - conf/1gpu.yml
+
+train/build_dataset.folders:
+  speech_fb:
+    - /data/daps/train
+  speech_hq:
+    - /data/vctk
+    - /data/vocalset
+    - /data/read_speech
+    - /data/french_speech
+  speech_uq:
+    - /data/emotional_speech/
+    - /data/common_voice/
+    - /data/german_speech/
+    - /data/russian_speech/
+    - /data/spanish_speech/
+
+val/build_dataset.folders:
+  speech_hq:
+    - /data/daps/val

@@ -1,0 +1,9 @@
+$include:
+  - conf/base.yml
+  - conf/1gpu.yml
+
+lambdas:
+  mel/loss: 1.0
+  waveform/loss: 1.0
+  vq/commitment_loss: 0.25
+  vq/codebook_loss: 1.0

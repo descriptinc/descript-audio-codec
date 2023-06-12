@@ -1,0 +1,21 @@
+$include:
+  - conf/base.yml
+  - conf/1gpu.yml
+
+Discriminator.sample_rate: 44100
+Discriminator.rates: [1]
+Discriminator.periods: []
+Discriminator.fft_sizes: [2048, 1024, 512]
+Discriminator.bands:
+  - [0.0, 0.1]
+  - [0.1, 0.25]
+  - [0.25, 0.5]
+  - [0.5, 0.75]
+  - [0.75, 1.0]
+
+lambdas:
+  mel/loss: 15.0
+  adv/feat_loss: 2.5
+  adv/gen_loss: 1.0
+  vq/commitment_loss: 0.25
+  vq/codebook_loss: 1.0

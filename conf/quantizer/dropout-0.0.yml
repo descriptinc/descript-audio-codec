@@ -1,0 +1,5 @@
+$include:
+  - conf/base.yml
+  - conf/1gpu.yml
+
+DAC.quantizer_dropout: 0.0

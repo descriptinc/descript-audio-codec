@@ -1,0 +1,22 @@
+$include:
+  - conf/base.yml
+  - conf/1gpu.yml
+
+train/build_dataset.folders:
+  speech:
+    - /data/daps/train
+    - /data/vctk
+    - /data/vocalset
+    - /data/read_speech
+    - /data/french_speech
+    - /data/emotional_speech/
+    - /data/common_voice/
+    - /data/german_speech/
+    - /data/russian_speech/
+    - /data/spanish_speech/
+  music:
+    - /data/musdb/train
+    - /data/jamendo
+  general:
+    - /data/audioset/data/unbalanced_train_segments/
+    - /data/audioset/data/balanced_train_segments/

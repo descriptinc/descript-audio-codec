@@ -1,0 +1,5 @@
+*.pth
+*.wav
+*.dac
+tests/
+runs/

@@ -1,0 +1,18 @@
+$include:
+  - conf/base.yml
+  - conf/1gpu.yml
+
+MelSpectrogramLoss.n_mels: [80]
+MelSpectrogramLoss.window_lengths: [512]
+MelSpectrogramLoss.mel_fmin: [0]
+MelSpectrogramLoss.mel_fmax: [null]
+MelSpectrogramLoss.pow: 1.0
+MelSpectrogramLoss.clamp_eps: 1.0e-5
+MelSpectrogramLoss.mag_weight: 0.0
+
+lambdas:
+  mel/loss: 100.0
+  adv/feat_loss: 2.0
+  adv/gen_loss: 1.0
+  vq/commitment_loss: 0.25
+  vq/codebook_loss: 1.0
