@@ -11,7 +11,7 @@ from pathlib import Path
 
 import torch
 
-from dac import DAC
+from dac.model import DAC
 from dac import __model_version__
 from dac import load_model as _load_model
 
@@ -33,7 +33,7 @@ def load_model(pretrained: bool = False, tag: str = __model_version__, **kwargs)
 
     Returns
     -------
-    dac.DAC
+    dac.model.DAC
         Model object
     """
     if pretrained:
