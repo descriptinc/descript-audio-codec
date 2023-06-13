@@ -6,7 +6,7 @@ with open("README.md") as f:
 
 setup(
     name="dac",
-    version="0.0.1",
+    version="0.1.0",
     classifiers=[
         "Intended Audience :: Developers",
         "Natural Language :: English",
