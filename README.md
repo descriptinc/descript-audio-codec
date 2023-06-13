@@ -110,7 +110,7 @@ tests. To launch these tests please run
 python -m pytest tests
 ```
 
-## More results
+## Results
 
 <p align="left">
 <img src="./assets/objective_comparisons.png" width=75%></p>
