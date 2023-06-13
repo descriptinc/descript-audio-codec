@@ -1,17 +1,17 @@
 dependencies = [
-    "argbind>=0.3.7",
-    "audiotools @ git+https://github.com/descriptinc/audiotools.git@0.7.0",
+    "argbind",
+    "audiotools",
     "einops",
     "numpy",
     "torch",
     "torchaudio",
     "tqdm",
 ]
-from pathlib import Path
+from pathlib import Path as _Path
 
 import torch
 
-from dac.model import DAC
+from dac.model import DAC as _DAC
 from dac import __model_version__
 from dac.utils import load_model as _load_model
 
@@ -38,10 +38,10 @@ def load_model(pretrained: bool = False, tag: str = __model_version__, **kwargs)
     """
     if pretrained:
         model_path = (
-            Path(torch.hub.get_dir()) / "descript" / tag / "dac" / "weights.pth"
+            _Path(torch.hub.get_dir()) / "descript" / tag / "dac" / "weights.pth"
         )
         model = _load_model(tag, load_path=model_path)
     else:
-        model = DAC(**kwargs)
+        model = _DAC(**kwargs)
 
     return model
