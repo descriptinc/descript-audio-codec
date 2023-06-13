@@ -13,7 +13,7 @@ import torch
 
 from dac.model import DAC
 from dac import __model_version__
-from dac import load_model as _load_model
+from dac.utils import load_model as _load_model
 
 
 def load_model(pretrained: bool = False, tag: str = __model_version__, **kwargs):
