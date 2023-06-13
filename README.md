@@ -1,12 +1,15 @@
 # Descript Audio Codec (.dac)
 
-<!-- ![](https://static.arxiv.org/static/browse/0.3.4/images/icons/favicon-32x32.png) -->
+
 
 
 This repository contains training and inference scripts
 for the Descript Audio Codec (.dac), a high fidelity general
 neural audio codec.
 
+![](https://static.arxiv.org/static/browse/0.3.4/images/icons/favicon-16x16.png) [arXiv Paper Link](http://arxiv.org/abs/2306.06546) <br>
+📈 [Demo Site](https://descript.notion.site/Descript-Audio-Codec-11389fce0ce2419891d6591a68f814d5)<br>
+⚙ [Model Weights](https://github.com/descriptinc/descript-audio-codec/releases/download/0.0.1/weights.pth)
 
 ## Usage
 
@@ -16,6 +19,16 @@ git clone https://github.com/descriptinc/descript-audio-codec
 cd descript-audio-codec
 pip install .
 ```
+
+### Weights
+Weights are released as part of this repo under MIT license.
+They are automatically downloaded when you first run `encode` or `decode` command. They can be cached locally with 
+```
+python3 -m dac download 
+```
+We provide a Dockerfile that installs all required dependencies for encoding and decoding. The build process caches model weights inside the image. This allows the image to be used without an internet connection. [Please refer to instructions below.](#docker-image)
+
+
 
 ### Compress audio
 ```
