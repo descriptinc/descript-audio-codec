@@ -9,13 +9,10 @@ neural audio codec, introduced in the paper titled **High-Fidelity Audio Compres
 📈 [Demo Site](https://descript.notion.site/Descript-Audio-Codec-11389fce0ce2419891d6591a68f814d5)<br>
 ⚙ [Model Weights](https://github.com/descriptinc/descript-audio-codec/releases/download/0.0.1/weights.pth)
 
-### Results
 
-<p align="left">
+<p align="center">
 <img src="./assets/comparsion_stats.png" alt="Comparison of compressions approaches. Our model achieves a higher compression factor compared to all baseline methods. Our model has a ~90x compression factor compared to 32x compression factor of EnCodec and 64x of SoundStream. Note that we operate at a target bitrate of 8 kbps, whereas EnCodec operates at 24 kbps and SoundStream at 6 kbps. We also operate at 44.1 kHz, whereas EnCodec operates at 48 kHz and SoundStream operates at 24 kHz." width=35%></p>
 
-<p align="left">
-<img src="./assets/objective_comparisons.png" width=75%></p>
 
 ## Usage
 
@@ -112,3 +109,8 @@ tests. To launch these tests please run
 ```
 python -m pytest tests
 ```
+
+## More results
+
+<p align="left">
+<img src="./assets/objective_comparisons.png" width=75%></p>
