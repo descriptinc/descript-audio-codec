@@ -1,11 +1,21 @@
-# Descript Audio Codec (.dac)
-
-<!-- ![](https://static.arxiv.org/static/browse/0.3.4/images/icons/favicon-32x32.png) -->
-
+# Descript Audio Codec (.dac): High-Fidelity Audio Compression with Improved RVQGAN
 
 This repository contains training and inference scripts
 for the Descript Audio Codec (.dac), a high fidelity general
-neural audio codec.
+neural audio codec, introduced in the paper titled **High-Fidelity Audio Compression with Improved RVQGAN**.
+
+![](https://static.arxiv.org/static/browse/0.3.4/images/icons/favicon-16x16.png) [arXiv Paper: High-Fidelity Audio Compression with Improved RVQGAN
+](http://arxiv.org/abs/2306.06546) <br>
+📈 [Demo Site](https://descript.notion.site/Descript-Audio-Codec-11389fce0ce2419891d6591a68f814d5)<br>
+⚙ [Model Weights](https://github.com/descriptinc/descript-audio-codec/releases/download/0.0.1/weights.pth)
+
+👉 With Descript Audio Codec, you can compress **44.1 KHz audio** into discrete codes at a **low 8 kbps bitrate**.  <br>
+🤌 That's approximately **90x compression** while maintaining exceptional fidelity and minimizing artifacts.  <br>
+💪 Our universal model works on all domains (speech, environment, music, etc.), making it widely applicable to generative modeling of all audio.  <br>
+👌 It can be used as a drop-in replacement for EnCodec for all audio language modeling applications (such as AudioLMs, MusicLMs, MusicGen, etc.) <br>
+
+<p align="center">
+<img src="./assets/comparsion_stats.png" alt="Comparison of compressions approaches. Our model achieves a higher compression factor compared to all baseline methods. Our model has a ~90x compression factor compared to 32x compression factor of EnCodec and 64x of SoundStream. Note that we operate at a target bitrate of 8 kbps, whereas EnCodec operates at 24 kbps and SoundStream at 6 kbps. We also operate at 44.1 kHz, whereas EnCodec operates at 48 kHz and SoundStream operates at 24 kHz." width=35%></p>
 
 
 ## Usage
@@ -16,6 +26,16 @@ git clone https://github.com/descriptinc/descript-audio-codec
 cd descript-audio-codec
 pip install .
 ```
+
+### Weights
+Weights are released as part of this repo under MIT license.
+They are automatically downloaded when you first run `encode` or `decode` command. They can be cached locally with
+```
+python3 -m dac download
+```
+We provide a Dockerfile that installs all required dependencies for encoding and decoding. The build process caches model weights inside the image. This allows the image to be used without an internet connection. [Please refer to instructions below.](#docker-image)
+
+
 
 ### Compress audio
 ```
@@ -93,3 +113,8 @@ tests. To launch these tests please run
 ```
 python -m pytest tests
 ```
+
+## Results
+
+<p align="left">
+<img src="./assets/objective_comparisons.png" width=75%></p>
