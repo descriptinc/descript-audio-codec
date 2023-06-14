@@ -22,9 +22,12 @@ neural audio codec, introduced in the paper titled **High-Fidelity Audio Compres
 
 ### Installation
 ```
-git clone https://github.com/descriptinc/descript-audio-codec
-cd descript-audio-codec
-pip install .
+pip install descript-audio-codec
+```
+OR
+
+```
+pip install git+https://github.com/descriptinc/descript-audio-codec
 ```
 
 ### Weights
@@ -34,7 +37,6 @@ They are automatically downloaded when you first run `encode` or `decode` comman
 python3 -m dac download
 ```
 We provide a Dockerfile that installs all required dependencies for encoding and decoding. The build process caches model weights inside the image. This allows the image to be used without an internet connection. [Please refer to instructions below.](#docker-image)
-
 
 
 ### Compress audio
@@ -56,6 +58,38 @@ This command will create `.wav` files with the same name as the input files.
 It will also preserve the directory structure relative to input root and
 re-create it in the output directory. Please use `python -m dac decode --help`
 for more options.
+
+### Programmatic Usage
+```py
+import dac
+from dac.utils import load_model
+from dac.model import DAC
+
+from dac.utils.encode import process as encode
+from dac.utils.decode import process as decode
+
+from audiotools import AudioSignal
+
+# Init an empty model
+model = DAC()
+
+# Load compatible pre-trained model
+model = load_model(dac.__model_version__)
+model.eval()
+model.to('cuda')
+
+# Load audio signal file
+signal = AudioSignal('input.wav')
+
+# Encode audio signal
+encoded_out = encode(signal, 'cuda', model)
+
+# Decode audio signal
+recon = decode(encoded_out, 'cuda', model, preserve_sample_rate=True)
+
+# Write to file
+recon.write('recon.wav')
+```
 
 ### Docker image
 We provide a dockerfile to build a docker image with all the necessary

@@ -49,7 +49,7 @@ class EncoderBlock(nn.Module):
                 dim,
                 kernel_size=2 * stride,
                 stride=stride,
-                padding=stride // 2,
+                padding=math.ceil(stride / 2),
             ),
         )
 
@@ -96,7 +96,7 @@ class DecoderBlock(nn.Module):
                 output_dim,
                 kernel_size=2 * stride,
                 stride=stride,
-                padding=stride // 2,
+                padding=math.ceil(stride / 2),
             ),
             ResidualUnit(output_dim, dilation=1),
             ResidualUnit(output_dim, dilation=3),
