@@ -25,7 +25,6 @@ def run(stage: str):
         stage_fn()
         return
 
-
     stage_fn()
 
 

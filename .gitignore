@@ -172,5 +172,5 @@ archived/
 *.zip
 *.pth
 encoded_out/
-recon/ 
+recon/
 recons/
