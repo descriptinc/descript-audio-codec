@@ -6,7 +6,7 @@ with open("README.md") as f:
 
 setup(
     name="dac",
-    version="0.0.1",
+    version="0.0.2",
     classifiers=[
         "Intended Audience :: Developers",
         "Natural Language :: English",
@@ -28,7 +28,7 @@ setup(
     keywords=["audio", "compression", "machine learning"],
     install_requires=[
         "argbind>=0.3.7",
-        "audiotools @ git+https://github.com/descriptinc/audiotools.git@0.7.0",
+        "descript-audiotools==0.7.1",
         "einops",
         "numpy",
         "torch",
