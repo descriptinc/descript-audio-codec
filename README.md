@@ -22,9 +22,12 @@ neural audio codec, introduced in the paper titled **High-Fidelity Audio Compres
 
 ### Installation
 ```
-git clone https://github.com/descriptinc/descript-audio-codec
-cd descript-audio-codec
-pip install .
+pip install descript-audio-codec
+```
+OR
+
+```
+pip install git+https://github.com/descriptinc/descript-audio-codec
 ```
 
 ### Weights
