@@ -5,7 +5,7 @@ with open("README.md") as f:
     long_description = f.read()
 
 setup(
-    name="dac",
+    name="descript-audio-codec",
     version="0.0.2",
     classifiers=[
         "Intended Audience :: Developers",
