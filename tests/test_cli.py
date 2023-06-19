@@ -50,4 +50,24 @@ def test_reconstruction():
         run("decode")
 
 
+def test_compression():
+    # Test encoding
+    input_dir = Path(__file__).parent / "assets" / "input"
+    output_dir = input_dir.parent / "encoded_output_quantizers"
+    args = {"input": str(input_dir), "output": str(output_dir), "n_quantizers": 3}
+    with argbind.scope(args):
+        run("encode")
+
+    # Open .dac file
+    dac_file = output_dir / "sample_0.dac"
+    artifacts = np.load(dac_file, allow_pickle=True)[()]
+    codes = artifacts["codes"]
+
+    # Ensure that the number of quantizers is correct
+    assert codes.shape[1] == 3
+
+    # Ensure that dtype of compression is uint16
+    assert codes.dtype == np.uint16
+
+
 # CUDA_VISIBLE_DEVICES=0 python -m pytest tests/test_cli.py -s
