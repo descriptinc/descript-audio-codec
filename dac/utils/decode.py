@@ -52,7 +52,9 @@ def process(
     """
     if isinstance(generator, torch.nn.DataParallel):
         generator = generator.module
-    audio_signal = AudioSignal(artifacts["codes"], generator.sample_rate)
+    audio_signal = AudioSignal(
+        artifacts["codes"].astype(np.int64), generator.sample_rate
+    )
     metadata = artifacts["metadata"]
 
     # Decode chunks

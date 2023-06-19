@@ -1,4 +1,4 @@
-__version__ = "0.0.2"
+__version__ = "0.0.3"
 __model_version__ = "0.0.1"
 import audiotools
 

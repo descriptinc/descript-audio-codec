@@ -171,6 +171,9 @@ class ResidualVectorQuantize(nn.Module):
             n_quantizers = n_quantizers.to(z.device)
 
         for i, quantizer in enumerate(self.quantizers):
+            if self.training is False and i >= n_quantizers:
+                break
+
             z_q_i, commitment_loss_i, codebook_loss_i, indices_i, z_e_i = quantizer(
                 residual
             )
