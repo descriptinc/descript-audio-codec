@@ -104,7 +104,7 @@ def process(
     codebook_indices = torch.cat(codebook_indices, dim=0)
 
     return {
-        "codes": codebook_indices.numpy(),
+        "codes": codebook_indices.numpy().astype(np.uint16),
         "metadata": {
             "original_db": input_db,
             "overlap_hop_duration": overlap_hop_duration,
