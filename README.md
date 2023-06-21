@@ -32,11 +32,14 @@ pip install git+https://github.com/descriptinc/descript-audio-codec
 
 ### Weights
 Weights are released as part of this repo under MIT license.
-They are automatically downloaded when you first run `encode` or `decode` command. They can be cached locally with
+We release weights for models that can natively support 24kHz and 44.1 kHz sampling rates.
+Weights are automatically downloaded when you first run `encode` or `decode` command. You can cache them using one of the following commands
+```bash
+python3 -m dac download # downloads the default 44kHz variant
+python3 -m dac download --model_type 44khz # downloads the 44kHz variant
+python3 -m dac download --model_type 24khz # downloads the 24kHz variant
 ```
-python3 -m dac download
-```
-We provide a Dockerfile that installs all required dependencies for encoding and decoding. The build process caches model weights inside the image. This allows the image to be used without an internet connection. [Please refer to instructions below.](#docker-image)
+We provide a Dockerfile that installs all required dependencies for encoding and decoding. The build process caches the default model weights inside the image. This allows the image to be used without an internet connection. [Please refer to instructions below.](#docker-image)
 
 
 ### Compress audio
@@ -74,7 +77,7 @@ from audiotools import AudioSignal
 model = DAC()
 
 # Load compatible pre-trained model
-model = load_model(dac.__model_version__)
+model = load_model(tag="latest", model_type="44khz")
 model.eval()
 model.to('cuda')
 
