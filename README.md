@@ -32,7 +32,7 @@ pip install git+https://github.com/descriptinc/descript-audio-codec
 
 ### Weights
 Weights are released as part of this repo under MIT license.
-We release weights for models that can natively support 24kHz and 44.1 kHz sampling rates.
+We release weights for models that can natively support 24kHz and 44.1kHz sampling rates.
 Weights are automatically downloaded when you first run `encode` or `decode` command. You can cache them using one of the following commands
 ```bash
 python3 -m dac download # downloads the default 44kHz variant
