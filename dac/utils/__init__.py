@@ -82,7 +82,7 @@ def ensure_default_model(tag: str = "latest", model_type: str = "44khz"):
 
 
 def load_model(
-    tag: str,
+    tag: str = "latest",
     load_path: str = "",
     model_type: str = "44khz",
 ):
