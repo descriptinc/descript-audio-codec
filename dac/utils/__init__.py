@@ -1,9 +1,9 @@
 from pathlib import Path
 
+import argbind
 from audiotools import ml
 
 import dac
-
 
 DAC = dac.model.DAC
 Accelerator = ml.Accelerator
@@ -25,10 +25,10 @@ __MODEL_URLS__ = {
 }
 
 
+@argbind.bind(group="download", positional=True, without_prefix=True)
 def ensure_default_model(tag: str = "latest", model_type: str = "44khz"):
     """
-    Function that downloads the weights file from URL if a local cache is not
-    found.
+    Function that downloads the weights file from URL if a local cache is not found.
 
     Parameters
     ----------
