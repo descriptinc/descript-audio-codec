@@ -1,5 +1,8 @@
-__version__ = "0.0.3"
-__model_version__ = "0.0.1"
+__version__ = "0.0.4"
+
+# preserved here for legacy reasons
+__model_version__ = "latest"
+
 import audiotools
 
 audiotools.ml.BaseModel.INTERN += ["dac.**"]
