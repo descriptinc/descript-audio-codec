@@ -9,7 +9,6 @@ from audiotools import AudioSignal
 from audiotools.core import util
 from tqdm import tqdm
 
-import dac
 from dac.utils import load_model
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -124,13 +123,35 @@ def encode(
     input: str,
     output: str = "",
     weights_path: str = "",
-    model_tag: str = dac.__model_version__,
+    model_tag: str = "latest",
     n_quantizers: int = None,
     device: str = "cuda",
+    model_type: str = "44khz",
 ):
+    """Encode audio files in input path to .dac format.
+
+    Parameters
+    ----------
+    input : str
+        Path to input audio file or directory
+    output : str, optional
+        Path to output directory, by default "". If `input` is a directory, the directory sub-tree relative to `input` is re-created in `output`.
+    weights_path : str, optional
+        Path to weights file, by default "". If not specified, the weights file will be downloaded from the internet using the
+        model_tag and model_type.
+    model_tag : str, optional
+        Tag of the model to use, by default "latest". Ignored if `weights_path` is specified.
+    n_quantizers : int, optional
+        Number of quantizers to use, by default None. If not specified, all the quantizers will be used and the model will compress at maximum bitrate.
+    device : str, optional
+        Device to use, by default "cuda"
+    model_type : str, optional
+        The type of model to download. Must be one of "44khz" or "24khz". Defaults to "44khz". Ignored if `weights_path` is specified.
+    """
     generator = load_model(
         tag=model_tag,
         load_path=weights_path,
+        model_type=model_type,
     )
     generator.to(device)
     generator.eval()

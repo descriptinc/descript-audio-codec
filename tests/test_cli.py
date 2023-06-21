@@ -6,6 +6,8 @@ from pathlib import Path
 
 import argbind
 import numpy as np
+import pytest
+import torch
 from audiotools import AudioSignal
 
 from dac.__main__ import run
@@ -28,20 +30,23 @@ def teardown_module(module):
     subprocess.check_output(["rm", "-rf", f"{repo_root}/tests/assets"])
 
 
-def test_reconstruction():
+@pytest.mark.parametrize("model_type", ["44khz", "24khz"])
+def test_reconstruction(model_type):
     # Test encoding
     input_dir = Path(__file__).parent / "assets" / "input"
-    output_dir = input_dir.parent / "encoded_output"
+    output_dir = input_dir.parent / model_type / "encoded_output"
     args = {
         "input": str(input_dir),
         "output": str(output_dir),
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "model_type": model_type,
     }
     with argbind.scope(args):
         run("encode")
 
     # Test decoding
     input_dir = output_dir
-    output_dir = input_dir.parent / "decoded_output"
+    output_dir = input_dir.parent / model_type / "decoded_output"
     args = {
         "input": str(input_dir),
         "output": str(output_dir),
@@ -54,7 +59,12 @@ def test_compression():
     # Test encoding
     input_dir = Path(__file__).parent / "assets" / "input"
     output_dir = input_dir.parent / "encoded_output_quantizers"
-    args = {"input": str(input_dir), "output": str(output_dir), "n_quantizers": 3}
+    args = {
+        "input": str(input_dir),
+        "output": str(output_dir),
+        "n_quantizers": 3,
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
+    }
     with argbind.scope(args):
         run("encode")
 
