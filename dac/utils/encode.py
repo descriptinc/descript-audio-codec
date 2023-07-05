@@ -146,7 +146,7 @@ def encode(
     device : str, optional
         Device to use, by default "cuda"
     model_type : str, optional
-        The type of model to download. Must be one of "44khz" or "24khz". Defaults to "44khz". Ignored if `weights_path` is specified.
+        The type of model to download. Must be one of "44khz", "24khz", or "16khz". Defaults to "44khz". Ignored if `weights_path` is specified.
     """
     generator = load_model(
         tag=model_tag,

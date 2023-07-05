@@ -22,6 +22,10 @@ __MODEL_URLS__ = {
         "24khz",
         "0.0.4",
     ): "https://github.com/descriptinc/descript-audio-codec/releases/download/0.0.4/weights_24khz.pth",
+    (
+        "16khz",
+        "0.0.5",
+    ): "https://github.com/descriptinc/descript-audio-codec/releases/download/0.0.5/weights_16khz.pth",
 }
 
 
@@ -35,7 +39,7 @@ def ensure_default_model(tag: str = "latest", model_type: str = "44khz"):
     tag : str
         The tag of the model to download. Defaults to "latest".
     model_type : str
-        The type of model to download. Must be one of "44khz" or "24khz". Defaults to "44khz".
+        The type of model to download. Must be one of "44khz", "24khz", or "16khz". Defaults to "44khz".
 
     Returns
     -------
@@ -48,7 +52,8 @@ def ensure_default_model(tag: str = "latest", model_type: str = "44khz"):
     assert model_type in [
         "44khz",
         "24khz",
-    ], "model_type must be one of '44khz' or '24khz'"
+        "16khz",
+    ], "model_type must be one of '44khz', '24khz', or '16khz'"
 
     if tag == "latest":
         tag = __MODEL_LATEST_TAGS__[model_type]
