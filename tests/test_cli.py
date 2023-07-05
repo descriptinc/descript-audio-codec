@@ -30,7 +30,7 @@ def teardown_module(module):
     subprocess.check_output(["rm", "-rf", f"{repo_root}/tests/assets"])
 
 
-@pytest.mark.parametrize("model_type", ["44khz", "24khz"])
+@pytest.mark.parametrize("model_type", ["44khz", "24khz", "16khz"])
 def test_reconstruction(model_type):
     # Test encoding
     input_dir = Path(__file__).parent / "assets" / "input"
