@@ -11,6 +11,7 @@ Accelerator = ml.Accelerator
 __MODEL_LATEST_TAGS__ = {
     "44khz": "0.0.1",
     "24khz": "0.0.4",
+    "16khz": "0.0.5",
 }
 
 __MODEL_URLS__ = {
