@@ -50,6 +50,7 @@ def test_reconstruction(model_type):
     args = {
         "input": str(input_dir),
         "output": str(output_dir),
+        "model_type": model_type,
     }
     with argbind.scope(args):
         run("decode")
