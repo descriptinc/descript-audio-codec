@@ -149,6 +149,9 @@ def load(
     generator = DAC() if generator is None else generator
     discriminator = Discriminator() if discriminator is None else discriminator
 
+    tracker.print(generator)
+    tracker.print(discriminator)
+
     generator = accel.prepare_model(generator)
     discriminator = accel.prepare_model(discriminator)
 
@@ -390,7 +393,7 @@ def train(
         num_workers=num_workers,
         batch_size=val_batch_size,
         collate_fn=state.val_data.collate,
-        persistent_workers=True,
+        persistent_workers=True if num_workers > 0 else False,
     )
 
     # Wrap the functions so that they neatly track in TensorBoard + progress bars

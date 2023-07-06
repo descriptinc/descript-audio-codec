@@ -130,6 +130,28 @@ Please install the correct dependencies
 pip install -e ".[dev]"
 ```
 
+## Environment setup
+
+We have provided a Dockerfile and docker compose setup that makes running experiments easy.
+
+To build the docker image do:
+
+```
+docker compose build
+```
+
+Then, to launch a container, do:
+
+```
+docker compose run -p 8888:8888 -p 6006:6006 dev
+```
+
+The port arguments (`-p`) are optional, but useful if you want to launch a Jupyter and Tensorboard instances within the container. The
+default password for Jupyter is `password`, and the current directory
+is mounted to `/u/home/src`, which also becomes the working directory.
+
+Then, run your training command.
+
 
 ### Single GPU training
 ```

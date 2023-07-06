@@ -1,0 +1,13 @@
+ARG IMAGE=pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime
+ARG GITHUB_TOKEN=none
+
+FROM $IMAGE
+
+RUN echo machine github.com login ${GITHUB_TOKEN} > ~/.netrc
+
+COPY requirements.txt /requirements.txt
+
+RUN apt update && apt install -y git
+
+# install the package
+RUN pip install --upgrade -r /requirements.txt

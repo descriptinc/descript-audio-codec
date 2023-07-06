@@ -1,0 +1,4 @@
+$include:
+  - conf/base.yml
+
+DAC.quantizer_dropout: 0.5

@@ -1,0 +1,37 @@
+version: "3.5"
+services:
+  base:
+    build:
+      context: .
+      dockerfile: ./Dockerfile.dev
+      args:
+        GITHUB_TOKEN: ${GITHUB_TOKEN}
+        IMAGE: ${IMAGE}
+    volumes:
+      - .:/u/home/src
+      - ${PATH_TO_DATA}:/data
+      - ${PATH_TO_RUNS}:/runs
+      - ~/.config/gcloud:/u/home/.config/gcloud
+      - ~/.zsh_history:/u/home/.zsh_history
+    environment:
+      - GITHUB_TOKEN
+      - HOST_USER_ID
+      - HOST_USER_GID
+      - JUPYTER_TOKEN=password
+      - PATH_TO_DATA=/data
+      - PATH_TO_RUNS=/runs
+      - MPLCONFIGDIR=/u/home/.mplconfig
+    shm_size: 32G
+    working_dir: /u/home/src
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+  dev:
+    extends: base
+    profiles:
+      - interactive
+    stdin_open: true
+    tty: true
