@@ -280,7 +280,7 @@ def train_loop(state, batch, accel, lambdas):
     return {k: v for k, v in sorted(output.items())}
 
 
-def checkpoint(state, save_iters, save_path):
+def checkpoint(state, save_iters, save_path, accel):
     metadata = {"logs": state.tracker.history}
 
     tags = ["latest"]
@@ -312,7 +312,7 @@ def checkpoint(state, save_iters, save_path):
 
 
 @torch.no_grad()
-def save_samples(state, val_idx, writer):
+def save_samples(state, val_idx, writer, accel):
     state.tracker.print("Saving audio samples to TensorBoard")
     state.generator.eval()
 
@@ -417,11 +417,11 @@ def train(
                 tracker.step == num_iters - 1 if num_iters is not None else False
             )
             if tracker.step % sample_freq == 0 or last_iter:
-                save_samples(state, val_idx, writer)
+                save_samples(state, val_idx, writer, accel)
 
             if tracker.step % valid_freq == 0 or last_iter:
                 validate(state, val_dataloader, accel)
-                checkpoint(state, save_iters, save_path)
+                checkpoint(state, save_iters, save_path, accel)
                 # Reset validation progress bar, print summary since last validation.
                 tracker.done("val", f"Iteration {tracker.step}")
 
