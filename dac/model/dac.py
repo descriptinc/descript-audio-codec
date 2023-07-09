@@ -24,16 +24,16 @@ def init_weights(m):
 class ResidualUnit(nn.Module):
     def __init__(self, dim: int = 16, dilation: int = 1):
         super().__init__()
-        pad = ((7 - 1) * dilation) // 2
+        self.trim = ((7 - 1) * dilation) // 2
         self.block = nn.Sequential(
             Snake1d(dim),
-            WNConv1d(dim, dim, kernel_size=7, dilation=dilation, padding=pad),
+            WNConv1d(dim, dim, kernel_size=7, dilation=dilation),
             Snake1d(dim),
             WNConv1d(dim, dim, kernel_size=1),
         )
 
     def forward(self, x):
-        return x + self.block(x)
+        return x[..., self.trim:-self.trim] + self.block(x)
 
 
 class EncoderBlock(nn.Module):
@@ -49,7 +49,6 @@ class EncoderBlock(nn.Module):
                 dim,
                 kernel_size=2 * stride,
                 stride=stride,
-                padding=math.ceil(stride / 2),
             ),
         )
 
@@ -65,7 +64,7 @@ class Encoder(nn.Module):
     ):
         super().__init__()
         # Create first convolution
-        self.block = [WNConv1d(1, d_model, kernel_size=7, padding=3)]
+        self.block = [WNConv1d(1, d_model, kernel_size=7)]
 
         # Create EncoderBlocks that double channels as they downsample by `stride`
         for stride in strides:
@@ -75,7 +74,7 @@ class Encoder(nn.Module):
         # Create last convolution
         self.block += [
             Snake1d(d_model),
-            WNConv1d(d_model, d_model, kernel_size=3, padding=1),
+            WNConv1d(d_model, d_model, kernel_size=3),
         ]
 
         # Wrap black into nn.Sequential
@@ -96,7 +95,6 @@ class DecoderBlock(nn.Module):
                 output_dim,
                 kernel_size=2 * stride,
                 stride=stride,
-                padding=math.ceil(stride / 2),
             ),
             ResidualUnit(output_dim, dilation=1),
             ResidualUnit(output_dim, dilation=3),
@@ -118,7 +116,7 @@ class Decoder(nn.Module):
         super().__init__()
 
         # Add first conv layer
-        layers = [WNConv1d(input_channel, channels, kernel_size=7, padding=3)]
+        layers = [WNConv1d(input_channel, channels, kernel_size=7)]
 
         # Add upsampling + MRF blocks
         for i, stride in enumerate(rates):
@@ -129,7 +127,7 @@ class Decoder(nn.Module):
         # Add final conv layer
         layers += [
             Snake1d(output_dim),
-            WNConv1d(output_dim, d_out, kernel_size=7, padding=3),
+            WNConv1d(output_dim, d_out, kernel_size=7),
             nn.Tanh(),
         ]
 
@@ -160,13 +158,12 @@ class DAC(BaseModel, CodecMixin):
         self.decoder_rates = decoder_rates
         self.sample_rate = sample_rate
 
-        self.hop_length = np.prod(decoder_rates)
+        self.hop_length = np.prod(encoder_rates)
         self.encoder = Encoder(encoder_dim, encoder_rates)
 
         self.n_codebooks = n_codebooks
         self.codebook_size = codebook_size
         self.codebook_dim = codebook_dim
-
         self.quantizer = ResidualVectorQuantize(
             self.encoder.enc_dim,
             n_codebooks=n_codebooks,
@@ -183,20 +180,58 @@ class DAC(BaseModel, CodecMixin):
         self.sample_rate = sample_rate
         self.apply(init_weights)
 
+        self.delay = self.get_delay()
+
+    def get_delay(self):     
+        # Any number works here, delay is invariant to input length
+        L = 0
+
+        # Calculate output length
+        for layer in self.modules():
+            if isinstance(layer, (nn.Conv1d, nn.ConvTranspose1d)):        
+                d = layer.dilation[0]
+                k = layer.kernel_size[0]
+                s = layer.stride[0]
+
+                if isinstance(layer, nn.Conv1d):
+                    L = ((L - d * (k - 1) - 1) / s) + 1
+                elif isinstance(layer, nn.ConvTranspose1d):
+                    L = (L - 1) * s + d * (k - 1) + 1
+
+                L = math.floor(L)
+        
+        l_out = L
+
+        layers = []
+        for layer in self.modules():
+            if isinstance(layer, (nn.Conv1d, nn.ConvTranspose1d)):
+                layers.append(layer)
+                
+        for layer in reversed(layers):
+            d = layer.dilation[0]
+            k = layer.kernel_size[0]
+            s = layer.stride[0]
+
+            if isinstance(layer, nn.ConvTranspose1d):
+                L = ((L - d * (k - 1) - 1) / s) + 1
+            elif isinstance(layer, nn.Conv1d):
+                L = (L - 1) * s + d * (k - 1) + 1
+
+            L = math.ceil(L)
+
+        l_in = L
+                    
+        return (l_in - l_out) // 2
+
     def preprocess(self, audio_data, sample_rate):
         if sample_rate is None:
             sample_rate = self.sample_rate
         assert sample_rate == self.sample_rate
-
-        length = audio_data.shape[-1]
-        right_pad = math.ceil(length / self.hop_length) * self.hop_length - length
-        audio_data = nn.functional.pad(audio_data, (0, right_pad))
-        return audio_data, length
+        return audio_data
 
     def encode(
         self,
         audio_data: torch.Tensor,
-        sample_rate: int = None,
         n_quantizers: int = None,
     ):
         """Encode given audio data and return quantized latent codes
@@ -205,9 +240,6 @@ class DAC(BaseModel, CodecMixin):
         ----------
         audio_data : Tensor[B x 1 x T]
             Audio data to encode
-        sample_rate : int, optional
-            Sample rate of audio data in Hz, by default None
-            If None, defaults to `self.sample_rate`
         n_quantizers : int, optional
             Number of quantizers to use, by default None
             If None, all quantizers are used.
@@ -231,15 +263,11 @@ class DAC(BaseModel, CodecMixin):
             "length" : int
                 Number of samples in input audio
         """
-        out = {}
-        audio_data, length = self.preprocess(audio_data, sample_rate)
-        out["length"] = length
+        z = self.encoder(audio_data)
+        z, codes, latents, commitment_loss, codebook_loss = self.quantizer(z, n_quantizers)
+        return z, codes, latents, commitment_loss, codebook_loss
 
-        out["z"] = self.encoder(audio_data)
-        out.update(self.quantizer(out["z"], n_quantizers))
-        return out
-
-    def decode(self, z: torch.Tensor, length: int = None):
+    def decode(self, z: torch.Tensor):
         """Decode given latent codes and return audio data
 
         Parameters
@@ -256,10 +284,7 @@ class DAC(BaseModel, CodecMixin):
             "audio" : Tensor[B x 1 x length]
                 Decoded audio data.
         """
-        out = {}
-        x = self.decoder(z)
-        out["audio"] = x[..., :length]
-        return out
+        return self.decoder(z)
 
     def forward(
         self,
@@ -301,10 +326,21 @@ class DAC(BaseModel, CodecMixin):
             "audio" : Tensor[B x 1 x length]
                 Decoded audio data.
         """
-        out = {}
-        out.update(self.encode(audio_data, sample_rate, n_quantizers))
-        out.update(self.decode(out["z"], out["length"]))
-        return out
+        audio_data = self.preprocess(audio_data, sample_rate)
+        z, codes, latents, commitment_loss, codebook_loss = self.encode(
+            audio_data, n_quantizers
+        )
+
+        x = self.decode(z)
+        return {
+            "audio": x,
+            "z": z,
+            "codes": codes,
+            "latents": latents,
+            "vq/commitment_loss": commitment_loss,
+            "vq/codebook_loss": codebook_loss,
+            "target": audio_data[..., self.delay:self.delay+x.shape[-1]],
+        }
 
 
 if __name__ == "__main__":

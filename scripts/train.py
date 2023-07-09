@@ -211,8 +211,9 @@ def val_loop(batch, state, accel):
         batch["signal"].clone(), **batch["transform_args"]
     )
 
-    recons = state.generator(signal.audio_data, signal.sample_rate)["audio"]
-    recons = AudioSignal(recons, signal.sample_rate)
+    out = state.generator(signal.audio_data, signal.sample_rate)
+    recons = AudioSignal(out["audio"], signal.sample_rate)
+    signal = AudioSignal(out["target"], signal.sample_rate)
 
     return {
         "loss": state.mel_loss(recons, signal),
@@ -237,6 +238,7 @@ def train_loop(state, batch, accel, lambdas):
     with accel.autocast():
         out = state.generator(signal.audio_data, signal.sample_rate)
         recons = AudioSignal(out["audio"], signal.sample_rate)
+        signal = AudioSignal(out["target"], signal.sample_rate)
         commitment_loss = out["vq/commitment_loss"]
         codebook_loss = out["vq/codebook_loss"]
 
@@ -322,9 +324,10 @@ def save_samples(state, val_idx, writer):
     signal = state.train_data.transform(
         batch["signal"].clone(), **batch["transform_args"]
     )
-
-    recons = state.generator(signal.audio_data, signal.sample_rate)["audio"]
-    recons = AudioSignal(recons, signal.sample_rate)
+    
+    out = state.generator(signal.audio_data, signal.sample_rate)
+    recons = AudioSignal(out["audio"], signal.sample_rate)
+    signal = AudioSignal(out["target"], signal.sample_rate)
 
     audio_dict = {"recons": recons}
     if state.tracker.step == 0:
