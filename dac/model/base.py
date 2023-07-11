@@ -2,47 +2,115 @@ import math
 from pathlib import Path
 from typing import Union
 
+import numpy as np
 import torch
 import tqdm
 from audiotools import AudioSignal
+from torch import nn
+from dataclasses import dataclass
+
+@dataclass
+class DACFile:
+    codes: torch.Tensor
+
+    # Metadata
+    chunk_length: int
+    original_length: int
+    input_db: float
+    channels: int
+    sample_rate: int
+
+    def save(self, path):
+        artifacts = {
+            "codes": self.codes.numpy().astype(np.uint16),
+            "metadata": {
+                "input_db": self.input_db.numpy().astype(np.float32),
+                "original_length": self.original_length,
+                "sample_rate": self.sample_rate,
+                "chunk_length": self.chunk_length,
+                "channels": self.channels
+            }
+        }
+        path = Path(path).with_suffix(".dac")
+        with open(path, "wb") as f:
+            np.save(f, artifacts)
+        return path
+    
+    @classmethod
+    def load(cls, path):
+        artifacts = np.load(path, allow_pickle=True)[()]
+        codes = torch.from_numpy(artifacts["codes"].astype(int))
+        return cls(codes=codes, **artifacts["metadata"])
 
 
 class CodecMixin:
-    EXT = ".dac"
+    def get_delay(self):     
+        # Any number works here, delay is invariant to input length
+        l_out = self.get_output_length(0)
+        L = l_out
 
+        layers = []
+        for layer in self.modules():
+            if isinstance(layer, (nn.Conv1d, nn.ConvTranspose1d)):
+                layers.append(layer)
+                
+        for layer in reversed(layers):
+            d = layer.dilation[0]
+            k = layer.kernel_size[0]
+            s = layer.stride[0]
+
+            if isinstance(layer, nn.ConvTranspose1d):
+                L = ((L - d * (k - 1) - 1) / s) + 1
+            elif isinstance(layer, nn.Conv1d):
+                L = (L - 1) * s + d * (k - 1) + 1
+
+            L = math.ceil(L)
+
+        l_in = L
+                    
+        return (l_in - l_out) // 2
+    
+    def get_output_length(self, input_length):
+        L = input_length
+        # Calculate output length
+        for layer in self.modules():
+            if isinstance(layer, (nn.Conv1d, nn.ConvTranspose1d)):        
+                d = layer.dilation[0]
+                k = layer.kernel_size[0]
+                s = layer.stride[0]
+    
+                if isinstance(layer, nn.Conv1d):
+                    L = ((L - d * (k - 1) - 1) / s) + 1
+                elif isinstance(layer, nn.ConvTranspose1d):
+                    L = (L - 1) * s + d * (k - 1) + 1
+    
+                L = math.floor(L)        
+        return L
+    
     @torch.no_grad()
-    def reconstruct(
+    def compress(
         self,
         audio_path_or_signal: Union[str, Path, AudioSignal],
-        overlap_win_duration: float = 5.0,
-        overlap_hop_ratio: float = 0.5,
+        win_duration: float = 1.0,
         verbose: bool = False,
         normalize_db: float = -16,
-        match_input_db: bool = False,
-        mono: bool = False,
-        **kwargs,
+        n_quantizers: int = None,
     ):
-        """Reconstructs an audio signal from a file or AudioSignal object.
-            This function decomposes the audio signal into overlapping windows
-            and reconstructs them one by one. The overlapping windows are then
-            overlap-and-added together to form the final output.
+        """Processes an audio signal from a file or AudioSignal object into
+        discrete codes. This function processes the signal in short windows,
+        using constant GPU memory.
 
         Parameters
         ----------
         audio_path_or_signal : Union[str, Path, AudioSignal]
             audio signal to reconstruct
-        overlap_win_duration : float, optional
-            overlap window duration in seconds, by default 5.0
-        overlap_hop_ratio : float, optional
-            overlap hop ratio, by default 0.5
+        win_duration : float, optional
+            window duration in seconds, by default 5.0
         verbose : bool, optional
             by default False
         normalize_db : float, optional
             normalize db, by default -16
-        match_input_db : bool, optional
-            set True to match input db, by default False
-        mono : bool, optional
-            set True to convert to mono, by default False
+        
         Returns
         -------
         AudioSignal
@@ -53,64 +121,99 @@ class CodecMixin:
         if isinstance(audio_signal, (str, Path)):
             audio_signal = AudioSignal.load_from_file_with_ffmpeg(str(audio_signal))
 
-        if mono:
-            audio_signal = audio_signal.to_mono()
-
         audio_signal = audio_signal.clone()
-        audio_signal = audio_signal.ffmpeg_resample(self.sample_rate)
+        original_sr = audio_signal.sample_rate
 
+        resample_fn = audio_signal.resample
+        loudness_fn = audio_signal.loudness
+
+        # If audio is > 10 minutes long, use the ffmpeg versions
+        if audio_signal.signal_duration >= 10 * 60 * 60:
+            resample_fn = audio_signal.ffmpeg_resample
+            loudness_fn = audio_signal.ffmpeg_loudness
+
+        resample_fn(self.sample_rate)
         original_length = audio_signal.signal_length
-        input_db = audio_signal.ffmpeg_loudness()
-
-        # Fix overlap window so that it's divisible by 4 in # of samples
-        sr = audio_signal.sample_rate
-        overlap_win_duration = ((overlap_win_duration * sr) // 4) * 4
-        overlap_win_duration = overlap_win_duration / sr
+        input_db = loudness_fn()
 
         if normalize_db is not None:
             audio_signal.normalize(normalize_db)
         audio_signal.ensure_max_of_audio()
-        overlap_hop_duration = overlap_win_duration * overlap_hop_ratio
-        do_overlap_and_add = audio_signal.signal_duration > overlap_win_duration
 
         nb, nac, nt = audio_signal.audio_data.shape
         audio_signal.audio_data = audio_signal.audio_data.reshape(nb * nac, 1, nt)
 
-        if do_overlap_and_add:
-            pad_length = (
-                math.ceil(audio_signal.signal_duration / overlap_win_duration)
-                * overlap_win_duration
-            )
-            audio_signal.zero_pad_to(int(pad_length * sr))
-            audio_signal = audio_signal.collect_windows(
-                overlap_win_duration, overlap_hop_duration
-            )
+        # Zero-pad signal on either side by the delay
+        audio_signal.zero_pad(self.delay, self.delay)
+        n_samples = int(win_duration * self.sample_rate)
+        # Round n_samples to nearest hop length multiple
+        n_samples = int(math.ceil(n_samples / self.hop_length) * self.hop_length)
+        
+        codes = []
 
         range_fn = range if not verbose else tqdm.trange
-        for i in range_fn(audio_signal.batch_size):
-            signal_from_batch = AudioSignal(
-                audio_signal.audio_data[i, ...], audio_signal.sample_rate
-            )
-            signal_from_batch.to(self.device)
-            _output = self.forward(
-                signal_from_batch.audio_data, signal_from_batch.sample_rate, **kwargs
-            )
+        hop = self.get_output_length(n_samples)
 
-            _output = _output["audio"].detach()
-            _output_signal = AudioSignal(_output, self.sample_rate).to(self.device)
-            audio_signal.audio_data[i] = _output_signal.audio_data.cpu()
+        for i in range_fn(0, nt, hop):
+            x = audio_signal[..., i:i+n_samples]
+            x = x.zero_pad(0, max(0, n_samples - x.shape[-1]))
 
-        recons = audio_signal
-        recons._loudness = None
-        recons.stft_data = None
+            audio_data = x.audio_data.to(self.device)
+            audio_data = self.preprocess(audio_data, self.sample_rate)
+            _, c, _, _, _ = self.encode(audio_data, n_quantizers)
+            codes.append(c)
+            chunk_length = c.shape[-1]
 
-        if do_overlap_and_add:
-            recons = recons.overlap_and_add(overlap_hop_duration)
-            recons.audio_data = recons.audio_data.reshape(nb, nac, -1)
+        codes = torch.cat(codes, dim=-1)
 
-        if match_input_db:
-            recons.ffmpeg_loudness()
-            recons = recons.normalize(input_db)
+        dac_file = DACFile(
+            codes=codes, 
+            chunk_length=chunk_length, 
+            original_length=original_length,
+            input_db=input_db,
+            channels=nac,
+            sample_rate=original_sr,
+        )
+        
+        if n_quantizers is not None:
+            codes = codes[:, :n_quantizers, :]
+        return dac_file
+    
+    @torch.no_grad()
+    def decompress(
+        self,
+        obj: Union[str, Path, DACFile],
+        verbose: bool = False,
+    ):
+        if isinstance(obj, (str, Path)):
+            obj = DACFile.load(obj)
 
-        recons.truncate_samples(original_length)
+        range_fn = range if not verbose else tqdm.trange
+        codes = obj.codes
+        chunk_length = obj.chunk_length
+        recons = []
+
+        for i in range_fn(0, codes.shape[-1], chunk_length):
+            c = codes[..., i:i+chunk_length].to(self.device)
+            z = self.quantizer.from_codes(c)[0]
+            r = self.decode(z)
+            recons.append(r.cpu())
+
+        recons = torch.cat(recons, dim=-1)
+        recons = AudioSignal(recons, self.sample_rate)
+
+        resample_fn = recons.resample
+        loudness_fn = recons.loudness
+
+        # If audio is > 10 minutes long, use the ffmpeg versions
+        if recons.signal_duration >= 10 * 60 * 60:
+            resample_fn = recons.ffmpeg_resample
+            loudness_fn = recons.ffmpeg_loudness
+
+        recons.truncate_samples(obj.original_length)
+        loudness_fn()
+        recons.normalize(obj.input_db)
+        resample_fn(obj.sample_rate)
+        recons.audio_data = recons.audio_data.reshape(-1, obj.channels, obj.original_length)
+
         return recons

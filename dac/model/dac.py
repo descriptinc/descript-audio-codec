@@ -182,47 +182,6 @@ class DAC(BaseModel, CodecMixin):
 
         self.delay = self.get_delay()
 
-    def get_delay(self):     
-        # Any number works here, delay is invariant to input length
-        L = 0
-
-        # Calculate output length
-        for layer in self.modules():
-            if isinstance(layer, (nn.Conv1d, nn.ConvTranspose1d)):        
-                d = layer.dilation[0]
-                k = layer.kernel_size[0]
-                s = layer.stride[0]
-
-                if isinstance(layer, nn.Conv1d):
-                    L = ((L - d * (k - 1) - 1) / s) + 1
-                elif isinstance(layer, nn.ConvTranspose1d):
-                    L = (L - 1) * s + d * (k - 1) + 1
-
-                L = math.floor(L)
-        
-        l_out = L
-
-        layers = []
-        for layer in self.modules():
-            if isinstance(layer, (nn.Conv1d, nn.ConvTranspose1d)):
-                layers.append(layer)
-                
-        for layer in reversed(layers):
-            d = layer.dilation[0]
-            k = layer.kernel_size[0]
-            s = layer.stride[0]
-
-            if isinstance(layer, nn.ConvTranspose1d):
-                L = ((L - d * (k - 1) - 1) / s) + 1
-            elif isinstance(layer, nn.Conv1d):
-                L = (L - 1) * s + d * (k - 1) + 1
-
-            L = math.ceil(L)
-
-        l_in = L
-                    
-        return (l_in - l_out) // 2
-
     def preprocess(self, audio_data, sample_rate):
         if sample_rate is None:
             sample_rate = self.sample_rate
