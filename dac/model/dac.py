@@ -122,7 +122,7 @@ class Decoder(nn.Module):
         super().__init__()
 
         # Add first conv layer
-        layers = [WNConv1d(input_channel, channels, kernel_size=7)]
+        layers = [WNConv1d(input_channel, channels, kernel_size=7, padding=3)]
 
         # Add upsampling + MRF blocks
         for i, stride in enumerate(rates):
