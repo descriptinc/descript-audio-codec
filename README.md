@@ -66,33 +66,42 @@ for more options.
 ### Programmatic Usage
 ```py
 import dac
-from dac.utils import load_model
-from dac.model import DAC
-
-from dac.utils.encode import process as encode
-from dac.utils.decode import process as decode
-
 from audiotools import AudioSignal
 
-# Init an empty model
-model = DAC()
+# Download a model
+model_path = dac.utils.download(model_type="44khz")
+model = dac.DAC.load(model_path)
 
-# Load compatible pre-trained model
-model = load_model(tag="latest", model_type="44khz")
-model.eval()
 model.to('cuda')
 
 # Load audio signal file
 signal = AudioSignal('input.wav')
 
-# Encode audio signal
-encoded_out = encode(signal, 'cuda', model)
+# Encode audio signal as one long file 
+# (may run out of GPU memory on long files)
+signal.to(model.device)
+
+x = model.preprocess(signal.audio_data, signal.sample_rate)
+z, codes, latents, _, _ = model.encode(x)
 
 # Decode audio signal
-recon = decode(encoded_out, 'cuda', model, preserve_sample_rate=True)
+y = model.decode(z)
+
+# Alternatively, use the `compress` and `decompress` functions
+# to compress long files.
+
+signal = signal.cpu()
+x = model.compress(signal)
+
+# Save and load to and from disk
+x.save("compressed.dac")
+x = dac.DACFile.load("compressed.dac")
+
+# Decompress it back to an AudioSignal
+y = model.decompress(x)
 
 # Write to file
-recon.write('recon.wav')
+y.write('output.wav')
 ```
 
 ### Docker image

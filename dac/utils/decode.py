@@ -21,7 +21,6 @@ def decode(
     output: str = "",
     weights_path: str = "",
     model_tag: str = "latest",
-    preserve_sample_rate: bool = False,
     device: str = "cuda",
     model_type: str = "44khz",
     verbose: bool = False,
@@ -40,8 +39,6 @@ def decode(
         model_tag and model_type.
     model_tag : str, optional
         Tag of the model to use, by default "latest". Ignored if `weights_path` is specified.
-    preserve_sample_rate : bool, optional
-        If True, return audio will have the same sample rate as the original
     device : str, optional
         Device to use, by default "cuda". If "cpu", the model will be loaded on the CPU.
     model_type : str, optional

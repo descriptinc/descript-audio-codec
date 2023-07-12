@@ -31,16 +31,16 @@ __MODEL_URLS__ = {
 
 
 @argbind.bind(group="download", positional=True, without_prefix=True)
-def ensure_default_model(tag: str = "latest", model_type: str = "44khz"):
+def download(model_type: str = "44khz", tag: str = "latest"):
     """
     Function that downloads the weights file from URL if a local cache is not found.
 
     Parameters
     ----------
-    tag : str
-        The tag of the model to download. Defaults to "latest".
     model_type : str
         The type of model to download. Must be one of "44khz", "24khz", or "16khz". Defaults to "44khz".
+    tag : str
+        The tag of the model to download. Defaults to "latest".
 
     Returns
     -------
@@ -83,22 +83,15 @@ def ensure_default_model(tag: str = "latest", model_type: str = "44khz"):
             )
         local_path.write_bytes(response.content)
 
-    # return the path required by audiotools to load the model
-    return local_path.parent.parent
+    return local_path
 
 
 def load_model(
-    tag: str = "latest",
-    load_path: str = "",
     model_type: str = "44khz",
+    tag: str = "latest",
+    load_path: str = None,
 ):
     if not load_path:
-        load_path = ensure_default_model(tag, model_type)
-    kwargs = {
-        "folder": load_path,
-        "map_location": "cpu",
-        "package": False,
-    }
-    print(f"Loading weights from {kwargs['folder']}")
-    generator, _ = DAC.load_from_folder(**kwargs)
+        load_path = download(model_type, tag)
+    generator, _ = DAC.load(load_path)
     return generator
