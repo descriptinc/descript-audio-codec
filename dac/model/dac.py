@@ -334,6 +334,8 @@ if __name__ == "__main__":
 
     # Make a forward pass
     out = model(x)["audio"]
+    print("Input shape:", x.shape)
+    print("Output shape:", out.shape)
 
     # Create gradient variable
     grad = torch.zeros_like(out)
