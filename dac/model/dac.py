@@ -66,6 +66,7 @@ class Encoder(nn.Module):
         self,
         d_model: int = 64,
         strides: list = [2, 4, 8, 8],
+        d_latent: int = 64,
     ):
         super().__init__()
         # Create first convolution
@@ -79,7 +80,7 @@ class Encoder(nn.Module):
         # Create last convolution
         self.block += [
             Snake1d(d_model),
-            WNConv1d(d_model, d_model, kernel_size=3, padding=1),
+            WNConv1d(d_model, d_latent, kernel_size=3, padding=1),
         ]
 
         # Wrap black into nn.Sequential
@@ -148,6 +149,7 @@ class DAC(BaseModel, CodecMixin):
         self,
         encoder_dim: int = 64,
         encoder_rates: List[int] = [2, 4, 8, 8],
+        latent_dim: int = None,
         decoder_dim: int = 1536,
         decoder_rates: List[int] = [8, 8, 4, 2],
         n_codebooks: int = 9,
@@ -164,14 +166,17 @@ class DAC(BaseModel, CodecMixin):
         self.decoder_rates = decoder_rates
         self.sample_rate = sample_rate
 
+        if latent_dim is None:
+            latent_dim = encoder_dim * (2 ** len(encoder_rates))
+
         self.hop_length = np.prod(encoder_rates)
-        self.encoder = Encoder(encoder_dim, encoder_rates)
+        self.encoder = Encoder(encoder_dim, encoder_rates, latent_dim)
 
         self.n_codebooks = n_codebooks
         self.codebook_size = codebook_size
         self.codebook_dim = codebook_dim
         self.quantizer = ResidualVectorQuantize(
-            self.encoder.enc_dim,
+            input_dim=latent_dim,
             n_codebooks=n_codebooks,
             codebook_size=codebook_size,
             codebook_dim=codebook_dim,
@@ -179,7 +184,7 @@ class DAC(BaseModel, CodecMixin):
         )
 
         self.decoder = Decoder(
-            self.encoder.enc_dim,
+            latent_dim,
             decoder_dim,
             decoder_rates,
         )
