@@ -24,16 +24,20 @@ def init_weights(m):
 class ResidualUnit(nn.Module):
     def __init__(self, dim: int = 16, dilation: int = 1):
         super().__init__()
-        self.trim = ((7 - 1) * dilation) // 2
+        pad = ((7 - 1) * dilation) // 2
         self.block = nn.Sequential(
             Snake1d(dim),
-            WNConv1d(dim, dim, kernel_size=7, dilation=dilation),
+            WNConv1d(dim, dim, kernel_size=7, dilation=dilation, padding=pad),
             Snake1d(dim),
             WNConv1d(dim, dim, kernel_size=1),
         )
 
     def forward(self, x):
-        return x[..., self.trim:-self.trim] + self.block(x)
+        y = self.block(x)
+        pad = (x.shape[-1] - y.shape[-1]) // 2
+        if pad > 0:
+            x = x[..., pad:-pad]
+        return x + y
 
 
 class EncoderBlock(nn.Module):
@@ -49,6 +53,7 @@ class EncoderBlock(nn.Module):
                 dim,
                 kernel_size=2 * stride,
                 stride=stride,
+                padding=math.ceil(stride / 2),
             ),
         )
 
@@ -64,7 +69,7 @@ class Encoder(nn.Module):
     ):
         super().__init__()
         # Create first convolution
-        self.block = [WNConv1d(1, d_model, kernel_size=7)]
+        self.block = [WNConv1d(1, d_model, kernel_size=7, padding=3)]
 
         # Create EncoderBlocks that double channels as they downsample by `stride`
         for stride in strides:
@@ -74,7 +79,7 @@ class Encoder(nn.Module):
         # Create last convolution
         self.block += [
             Snake1d(d_model),
-            WNConv1d(d_model, d_model, kernel_size=3),
+            WNConv1d(d_model, d_model, kernel_size=3, padding=1),
         ]
 
         # Wrap black into nn.Sequential
@@ -95,6 +100,7 @@ class DecoderBlock(nn.Module):
                 output_dim,
                 kernel_size=2 * stride,
                 stride=stride,
+                padding=math.ceil(stride / 2),
             ),
             ResidualUnit(output_dim, dilation=1),
             ResidualUnit(output_dim, dilation=3),
@@ -127,7 +133,7 @@ class Decoder(nn.Module):
         # Add final conv layer
         layers += [
             Snake1d(output_dim),
-            WNConv1d(output_dim, d_out, kernel_size=7),
+            WNConv1d(output_dim, d_out, kernel_size=7, padding=3),
             nn.Tanh(),
         ]
 
@@ -186,6 +192,11 @@ class DAC(BaseModel, CodecMixin):
         if sample_rate is None:
             sample_rate = self.sample_rate
         assert sample_rate == self.sample_rate
+        
+        length = audio_data.shape[-1]
+        right_pad = math.ceil(length / self.hop_length) * self.hop_length - length
+        audio_data = nn.functional.pad(audio_data, (0, right_pad))
+
         return audio_data
 
     def encode(
@@ -285,6 +296,7 @@ class DAC(BaseModel, CodecMixin):
             "audio" : Tensor[B x 1 x length]
                 Decoded audio data.
         """
+        length = audio_data.shape[-1]
         audio_data = self.preprocess(audio_data, sample_rate)
         z, codes, latents, commitment_loss, codebook_loss = self.encode(
             audio_data, n_quantizers
@@ -292,13 +304,12 @@ class DAC(BaseModel, CodecMixin):
 
         x = self.decode(z)
         return {
-            "audio": x,
+            "audio": x[..., :length],
             "z": z,
             "codes": codes,
             "latents": latents,
             "vq/commitment_loss": commitment_loss,
             "vq/codebook_loss": codebook_loss,
-            "target": audio_data[..., self.delay:self.delay+x.shape[-1]],
         }
 
 
@@ -306,7 +317,7 @@ if __name__ == "__main__":
     import numpy as np
     from functools import partial
 
-    model = DAC()
+    model = DAC().to("cuda:0")
 
     for n, m in model.named_modules():
         o = m.extra_repr()
@@ -337,3 +348,6 @@ if __name__ == "__main__":
     rf = (gradmap != 0).sum()
 
     print(f"Receptive field: {rf.item()}")
+
+    x = AudioSignal(torch.randn(1, 1, 44100 * 60), 44100)
+    model.decompress(model.compress(x, verbose=True), verbose=True)

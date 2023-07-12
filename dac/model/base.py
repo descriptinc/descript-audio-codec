@@ -44,6 +44,29 @@ class DACFile:
 
 
 class CodecMixin:
+    @property
+    def padding(self):
+        if not hasattr(self, "_padding"):
+            self._padding = True
+        return self._padding 
+
+    @padding.setter
+    def padding(self, value):
+        assert isinstance(value, bool)
+
+        layers = [
+            l for l in self.modules() 
+            if isinstance(l, (nn.Conv1d, nn.ConvTranspose1d))
+        ]
+
+        for layer in layers:
+            if value:
+                if hasattr(layer, "original_padding"):
+                    layer.padding = layer.original_padding
+            else:
+                layer.original_padding = layer.padding
+                layer.padding = tuple(0 for _ in range(len(layer.padding)))
+
     def get_delay(self):     
         # Any number works here, delay is invariant to input length
         l_out = self.get_output_length(0)
@@ -116,10 +139,14 @@ class CodecMixin:
         AudioSignal
             reconstructed audio signal
         """
-        self.eval()
         audio_signal = audio_path_or_signal
         if isinstance(audio_signal, (str, Path)):
             audio_signal = AudioSignal.load_from_file_with_ffmpeg(str(audio_signal))
+
+        self.eval()
+        original_padding = self.padding
+        original_device = audio_signal.device
+        self.padding = False
 
         audio_signal = audio_signal.clone()
         original_sr = audio_signal.sample_rate
@@ -132,8 +159,8 @@ class CodecMixin:
             resample_fn = audio_signal.ffmpeg_resample
             loudness_fn = audio_signal.ffmpeg_loudness
 
-        resample_fn(self.sample_rate)
         original_length = audio_signal.signal_length
+        resample_fn(self.sample_rate)
         input_db = loudness_fn()
 
         if normalize_db is not None:
@@ -161,7 +188,7 @@ class CodecMixin:
             audio_data = x.audio_data.to(self.device)
             audio_data = self.preprocess(audio_data, self.sample_rate)
             _, c, _, _, _ = self.encode(audio_data, n_quantizers)
-            codes.append(c)
+            codes.append(c.to(original_device))
             chunk_length = c.shape[-1]
 
         codes = torch.cat(codes, dim=-1)
@@ -177,6 +204,8 @@ class CodecMixin:
         
         if n_quantizers is not None:
             codes = codes[:, :n_quantizers, :]
+
+        self.padding = original_padding
         return dac_file
     
     @torch.no_grad()
@@ -185,11 +214,16 @@ class CodecMixin:
         obj: Union[str, Path, DACFile],
         verbose: bool = False,
     ):
+        self.eval()
+        original_padding = self.padding
+        self.padding = False
+
         if isinstance(obj, (str, Path)):
             obj = DACFile.load(obj)
 
         range_fn = range if not verbose else tqdm.trange
         codes = obj.codes
+        original_device = codes.device
         chunk_length = obj.chunk_length
         recons = []
 
@@ -197,7 +231,7 @@ class CodecMixin:
             c = codes[..., i:i+chunk_length].to(self.device)
             z = self.quantizer.from_codes(c)[0]
             r = self.decode(z)
-            recons.append(r.cpu())
+            recons.append(r.to(original_device))
 
         recons = torch.cat(recons, dim=-1)
         recons = AudioSignal(recons, self.sample_rate)
@@ -210,10 +244,11 @@ class CodecMixin:
             resample_fn = recons.ffmpeg_resample
             loudness_fn = recons.ffmpeg_loudness
 
-        recons.truncate_samples(obj.original_length)
-        loudness_fn()
         recons.normalize(obj.input_db)
         resample_fn(obj.sample_rate)
+        recons = recons[..., :obj.original_length]
+        loudness_fn()        
         recons.audio_data = recons.audio_data.reshape(-1, obj.channels, obj.original_length)
 
+        self.padding = original_padding
         return recons
