@@ -20,6 +20,7 @@ class DACFile:
     input_db: float
     channels: int
     sample_rate: int
+    padding: bool
 
     def save(self, path):
         artifacts = {
@@ -30,6 +31,7 @@ class DACFile:
                 "sample_rate": self.sample_rate,
                 "chunk_length": self.chunk_length,
                 "channels": self.channels,
+                "padding": self.padding,
             },
         }
         path = Path(path).with_suffix(".dac")
@@ -146,7 +148,6 @@ class CodecMixin:
         self.eval()
         original_padding = self.padding
         original_device = audio_signal.device
-        self.padding = False
 
         audio_signal = audio_signal.clone()
         original_sr = audio_signal.sample_rate
@@ -170,16 +171,23 @@ class CodecMixin:
         nb, nac, nt = audio_signal.audio_data.shape
         audio_signal.audio_data = audio_signal.audio_data.reshape(nb * nac, 1, nt)
 
-        # Zero-pad signal on either side by the delay
-        audio_signal.zero_pad(self.delay, self.delay)
-        n_samples = int(win_duration * self.sample_rate)
-        # Round n_samples to nearest hop length multiple
-        n_samples = int(math.ceil(n_samples / self.hop_length) * self.hop_length)
+        if win_duration is None or audio_signal.signal_duration <= win_duration:
+            # Unchunked compression (used if signal length < win duration)
+            self.padding = True
+            n_samples = nt
+            hop = nt
+        else:
+            # Chunked inference
+            self.padding = False
+            # Zero-pad signal on either side by the delay
+            audio_signal.zero_pad(self.delay, self.delay)
+            n_samples = int(win_duration * self.sample_rate)
+            # Round n_samples to nearest hop length multiple
+            n_samples = int(math.ceil(n_samples / self.hop_length) * self.hop_length)
+            hop = self.get_output_length(n_samples)
 
         codes = []
-
         range_fn = range if not verbose else tqdm.trange
-        hop = self.get_output_length(n_samples)
 
         for i in range_fn(0, nt, hop):
             x = audio_signal[..., i : i + n_samples]
@@ -200,6 +208,7 @@ class CodecMixin:
             input_db=input_db,
             channels=nac,
             sample_rate=original_sr,
+            padding=self.padding,
         )
 
         if n_quantizers is not None:
@@ -215,11 +224,11 @@ class CodecMixin:
         verbose: bool = False,
     ):
         self.eval()
-        original_padding = self.padding
-        self.padding = False
-
         if isinstance(obj, (str, Path)):
             obj = DACFile.load(obj)
+
+        original_padding = self.padding
+        self.padding = obj.padding
 
         range_fn = range if not verbose else tqdm.trange
         codes = obj.codes
