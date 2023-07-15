@@ -322,7 +322,7 @@ def save_samples(state, val_idx, writer):
     signal = state.train_data.transform(
         batch["signal"].clone(), **batch["transform_args"]
     )
-    
+
     out = state.generator(signal.audio_data, signal.sample_rate)
     recons = AudioSignal(out["audio"], signal.sample_rate)
 

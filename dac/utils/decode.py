@@ -7,8 +7,8 @@ import torch
 from audiotools import AudioSignal
 from tqdm import tqdm
 
-from dac.utils import load_model
 from dac import DACFile
+from dac.utils import load_model
 
 warnings.filterwarnings("ignore", category=UserWarning)
 

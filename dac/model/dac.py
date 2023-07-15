@@ -168,7 +168,7 @@ class DAC(BaseModel, CodecMixin):
 
         if latent_dim is None:
             latent_dim = encoder_dim * (2 ** len(encoder_rates))
-        
+
         self.latent_dim = latent_dim
 
         self.hop_length = np.prod(encoder_rates)
@@ -199,7 +199,7 @@ class DAC(BaseModel, CodecMixin):
         if sample_rate is None:
             sample_rate = self.sample_rate
         assert sample_rate == self.sample_rate
-        
+
         length = audio_data.shape[-1]
         right_pad = math.ceil(length / self.hop_length) * self.hop_length - length
         audio_data = nn.functional.pad(audio_data, (0, right_pad))
@@ -241,7 +241,9 @@ class DAC(BaseModel, CodecMixin):
                 Number of samples in input audio
         """
         z = self.encoder(audio_data)
-        z, codes, latents, commitment_loss, codebook_loss = self.quantizer(z, n_quantizers)
+        z, codes, latents, commitment_loss, codebook_loss = self.quantizer(
+            z, n_quantizers
+        )
         return z, codes, latents, commitment_loss, codebook_loss
 
     def decode(self, z: torch.Tensor):

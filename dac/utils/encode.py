@@ -70,7 +70,7 @@ def encode(
 
         # Encode audio to .dac format
         artifact = generator.compress(signal, win_duration, verbose=verbose)
-        
+
         # Compute output path
         relative_path = audio_files[i].relative_to(input)
         output_dir = output / relative_path.parent
@@ -82,6 +82,7 @@ def encode(
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         artifact.save(output_path)
+
 
 if __name__ == "__main__":
     args = argbind.parse_args()

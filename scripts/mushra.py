@@ -1,11 +1,10 @@
 import string
 from dataclasses import dataclass
-from typing import List
 from pathlib import Path
-
-import gradio as gr
+from typing import List
 
 import argbind
+import gradio as gr
 from audiotools import preference as pr
 
 
@@ -29,6 +28,7 @@ def get_text(wav_file: str):
     else:
         txt = ""
     return f"""<div style="text-align:center;font-size:large;">{txt}</div>"""
+
 
 def main(config: Config):
     with gr.Blocks() as app:
@@ -75,11 +75,15 @@ def main(config: Config):
                 pr.save_result(result, save_path)
 
             updates, done, pbar = samples.get_next_sample(reference, conditions)
-            wav_file = updates[0]['value']
+            wav_file = updates[0]["value"]
 
             txt_update = gr.update(value=get_text(wav_file))
 
-            return updates + [gr.update(value=50) for _ in ratings] + [done, samples, pbar, txt_update]
+            return (
+                updates
+                + [gr.update(value=50) for _ in ratings]
+                + [done, samples, pbar, txt_update]
+            )
 
         progress = gr.HTML()
         begin = gr.Button("Submit", elem_id="start-survey")
@@ -91,6 +95,7 @@ def main(config: Config):
 
         # Comment this back in to actually launch the script.
         app.launch(share=config.share)
+
 
 if __name__ == "__main__":
     args = argbind.parse_args()

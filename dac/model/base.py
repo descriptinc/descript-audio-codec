@@ -1,4 +1,5 @@
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Union
 
@@ -7,7 +8,7 @@ import torch
 import tqdm
 from audiotools import AudioSignal
 from torch import nn
-from dataclasses import dataclass
+
 
 @dataclass
 class DACFile:
@@ -28,14 +29,14 @@ class DACFile:
                 "original_length": self.original_length,
                 "sample_rate": self.sample_rate,
                 "chunk_length": self.chunk_length,
-                "channels": self.channels
-            }
+                "channels": self.channels,
+            },
         }
         path = Path(path).with_suffix(".dac")
         with open(path, "wb") as f:
             np.save(f, artifacts)
         return path
-    
+
     @classmethod
     def load(cls, path):
         artifacts = np.load(path, allow_pickle=True)[()]
@@ -48,15 +49,14 @@ class CodecMixin:
     def padding(self):
         if not hasattr(self, "_padding"):
             self._padding = True
-        return self._padding 
+        return self._padding
 
     @padding.setter
     def padding(self, value):
         assert isinstance(value, bool)
 
         layers = [
-            l for l in self.modules() 
-            if isinstance(l, (nn.Conv1d, nn.ConvTranspose1d))
+            l for l in self.modules() if isinstance(l, (nn.Conv1d, nn.ConvTranspose1d))
         ]
 
         for layer in layers:
@@ -67,7 +67,7 @@ class CodecMixin:
                 layer.original_padding = layer.padding
                 layer.padding = tuple(0 for _ in range(len(layer.padding)))
 
-    def get_delay(self):     
+    def get_delay(self):
         # Any number works here, delay is invariant to input length
         l_out = self.get_output_length(0)
         L = l_out
@@ -76,7 +76,7 @@ class CodecMixin:
         for layer in self.modules():
             if isinstance(layer, (nn.Conv1d, nn.ConvTranspose1d)):
                 layers.append(layer)
-                
+
         for layer in reversed(layers):
             d = layer.dilation[0]
             k = layer.kernel_size[0]
@@ -90,26 +90,26 @@ class CodecMixin:
             L = math.ceil(L)
 
         l_in = L
-                    
+
         return (l_in - l_out) // 2
-    
+
     def get_output_length(self, input_length):
         L = input_length
         # Calculate output length
         for layer in self.modules():
-            if isinstance(layer, (nn.Conv1d, nn.ConvTranspose1d)):        
+            if isinstance(layer, (nn.Conv1d, nn.ConvTranspose1d)):
                 d = layer.dilation[0]
                 k = layer.kernel_size[0]
                 s = layer.stride[0]
-    
+
                 if isinstance(layer, nn.Conv1d):
                     L = ((L - d * (k - 1) - 1) / s) + 1
                 elif isinstance(layer, nn.ConvTranspose1d):
                     L = (L - 1) * s + d * (k - 1) + 1
-    
-                L = math.floor(L)        
+
+                L = math.floor(L)
         return L
-    
+
     @torch.no_grad()
     def compress(
         self,
@@ -133,7 +133,7 @@ class CodecMixin:
             by default False
         normalize_db : float, optional
             normalize db, by default -16
-        
+
         Returns
         -------
         AudioSignal
@@ -175,14 +175,14 @@ class CodecMixin:
         n_samples = int(win_duration * self.sample_rate)
         # Round n_samples to nearest hop length multiple
         n_samples = int(math.ceil(n_samples / self.hop_length) * self.hop_length)
-        
+
         codes = []
 
         range_fn = range if not verbose else tqdm.trange
         hop = self.get_output_length(n_samples)
 
         for i in range_fn(0, nt, hop):
-            x = audio_signal[..., i:i+n_samples]
+            x = audio_signal[..., i : i + n_samples]
             x = x.zero_pad(0, max(0, n_samples - x.shape[-1]))
 
             audio_data = x.audio_data.to(self.device)
@@ -194,20 +194,20 @@ class CodecMixin:
         codes = torch.cat(codes, dim=-1)
 
         dac_file = DACFile(
-            codes=codes, 
-            chunk_length=chunk_length, 
+            codes=codes,
+            chunk_length=chunk_length,
             original_length=original_length,
             input_db=input_db,
             channels=nac,
             sample_rate=original_sr,
         )
-        
+
         if n_quantizers is not None:
             codes = codes[:, :n_quantizers, :]
 
         self.padding = original_padding
         return dac_file
-    
+
     @torch.no_grad()
     def decompress(
         self,
@@ -228,7 +228,7 @@ class CodecMixin:
         recons = []
 
         for i in range_fn(0, codes.shape[-1], chunk_length):
-            c = codes[..., i:i+chunk_length].to(self.device)
+            c = codes[..., i : i + chunk_length].to(self.device)
             z = self.quantizer.from_codes(c)[0]
             r = self.decode(z)
             recons.append(r.to(original_device))
@@ -246,9 +246,11 @@ class CodecMixin:
 
         recons.normalize(obj.input_db)
         resample_fn(obj.sample_rate)
-        recons = recons[..., :obj.original_length]
-        loudness_fn()        
-        recons.audio_data = recons.audio_data.reshape(-1, obj.channels, obj.original_length)
+        recons = recons[..., : obj.original_length]
+        loudness_fn()
+        recons.audio_data = recons.audio_data.reshape(
+            -1, obj.channels, obj.original_length
+        )
 
         self.padding = original_padding
         return recons

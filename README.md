@@ -77,7 +77,7 @@ model.to('cuda')
 # Load audio signal file
 signal = AudioSignal('input.wav')
 
-# Encode audio signal as one long file 
+# Encode audio signal as one long file
 # (may run out of GPU memory on long files)
 signal.to(model.device)
 
