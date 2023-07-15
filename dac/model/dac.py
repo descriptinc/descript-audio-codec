@@ -168,6 +168,8 @@ class DAC(BaseModel, CodecMixin):
 
         if latent_dim is None:
             latent_dim = encoder_dim * (2 ** len(encoder_rates))
+        
+        self.latent_dim = latent_dim
 
         self.hop_length = np.prod(encoder_rates)
         self.encoder = Encoder(encoder_dim, encoder_rates, latent_dim)
@@ -322,7 +324,7 @@ if __name__ == "__main__":
     import numpy as np
     from functools import partial
 
-    model = DAC().to("cuda:0")
+    model = DAC().to("cpu")
 
     for n, m in model.named_modules():
         o = m.extra_repr()
