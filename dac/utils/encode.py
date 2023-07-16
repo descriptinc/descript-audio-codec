@@ -69,7 +69,7 @@ def encode(
         signal = AudioSignal(audio_files[i])
 
         # Encode audio to .dac format
-        artifact = generator.compress(signal, win_duration, verbose=verbose)
+        artifact = generator.compress(signal, win_duration, verbose=verbose, **kwargs)
 
         # Compute output path
         relative_path = audio_files[i].relative_to(input)
