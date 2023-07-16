@@ -69,6 +69,8 @@ class CodecMixin:
                 layer.original_padding = layer.padding
                 layer.padding = tuple(0 for _ in range(len(layer.padding)))
 
+        self._padding = value
+
     def get_delay(self):
         # Any number works here, delay is invariant to input length
         l_out = self.get_output_length(0)
@@ -170,8 +172,11 @@ class CodecMixin:
 
         nb, nac, nt = audio_signal.audio_data.shape
         audio_signal.audio_data = audio_signal.audio_data.reshape(nb * nac, 1, nt)
+        win_duration = (
+            audio_signal.signal_duration if win_duration is None else win_duration
+        )
 
-        if win_duration is None or audio_signal.signal_duration <= win_duration:
+        if audio_signal.signal_duration <= win_duration:
             # Unchunked compression (used if signal length < win duration)
             self.padding = True
             n_samples = nt
