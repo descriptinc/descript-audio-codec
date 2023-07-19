@@ -86,7 +86,11 @@ def download(
         )
 
     local_path = (
-        Path.home() / ".cache" / "descript" / model_type / tag / "dac" / f"weights.pth"
+        Path.home()
+        / ".cache"
+        / "descript"
+        / "dac"
+        / f"weights_{model_type}_{model_bitrate}_{tag}.pth"
     )
     if not local_path.exists():
         local_path.parent.mkdir(parents=True, exist_ok=True)
