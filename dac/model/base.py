@@ -9,6 +9,8 @@ import tqdm
 from audiotools import AudioSignal
 from torch import nn
 
+SUPPORTED_VERSIONS = ["1.0.0"]
+
 
 @dataclass
 class DACFile:
@@ -21,6 +23,7 @@ class DACFile:
     channels: int
     sample_rate: int
     padding: bool
+    version: str
 
     def save(self, path):
         artifacts = {
@@ -32,6 +35,7 @@ class DACFile:
                 "chunk_length": self.chunk_length,
                 "channels": self.channels,
                 "padding": self.padding,
+                "dac_version": "1.0.0",
             },
         }
         path = Path(path).with_suffix(".dac")
@@ -43,6 +47,10 @@ class DACFile:
     def load(cls, path):
         artifacts = np.load(path, allow_pickle=True)[()]
         codes = torch.from_numpy(artifacts["codes"].astype(int))
+        if artifacts["metadata"].get("dac_version", None) not in SUPPORTED_VERSIONS:
+            raise RuntimeError(
+                f"Given file {path} can't be loaded with this version of descript-audio-codec."
+            )
         return cls(codes=codes, **artifacts["metadata"])
 
 
