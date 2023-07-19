@@ -23,7 +23,7 @@ class DACFile:
     channels: int
     sample_rate: int
     padding: bool
-    version: str
+    dac_version: str
 
     def save(self, path):
         artifacts = {
@@ -35,7 +35,7 @@ class DACFile:
                 "chunk_length": self.chunk_length,
                 "channels": self.channels,
                 "padding": self.padding,
-                "dac_version": "1.0.0",
+                "dac_version": SUPPORTED_VERSIONS[-1],
             },
         }
         path = Path(path).with_suffix(".dac")
@@ -223,6 +223,7 @@ class CodecMixin:
             channels=nac,
             sample_rate=original_sr,
             padding=self.padding,
+            dac_version=SUPPORTED_VERSIONS[-1],
         )
 
         if n_quantizers is not None:
