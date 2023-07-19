@@ -22,6 +22,7 @@ def encode(
     output: str = "",
     weights_path: str = "",
     model_tag: str = "latest",
+    model_bitrate: str = "8kbps",
     n_quantizers: int = None,
     device: str = "cuda",
     model_type: str = "44khz",
@@ -41,6 +42,8 @@ def encode(
         model_tag and model_type.
     model_tag : str, optional
         Tag of the model to use, by default "latest". Ignored if `weights_path` is specified.
+    model_bitrate: str
+        Bitrate of the model. Must be one of "8kbps", or "16kbps". Defaults to "8kbps".
     n_quantizers : int, optional
         Number of quantizers to use, by default None. If not specified, all the quantizers will be used and the model will compress at maximum bitrate.
     device : str, optional
@@ -49,9 +52,10 @@ def encode(
         The type of model to use. Must be one of "44khz", "24khz", or "16khz". Defaults to "44khz". Ignored if `weights_path` is specified.
     """
     generator = load_model(
+        model_type=model_type,
+        model_bitrate=model_bitrate,
         tag=model_tag,
         load_path=weights_path,
-        model_type=model_type,
     )
     generator.to(device)
     generator.eval()
