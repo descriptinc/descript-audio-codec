@@ -130,7 +130,7 @@ class CodecMixin:
         verbose: bool = False,
         normalize_db: float = -16,
         n_quantizers: int = None,
-    ):
+    ) -> DACFile:
         """Processes an audio signal from a file or AudioSignal object into
         discrete codes. This function processes the signal in short windows,
         using constant GPU memory.
@@ -148,8 +148,9 @@ class CodecMixin:
 
         Returns
         -------
-        AudioSignal
-            reconstructed audio signal
+        DACFile
+            Object containing compressed codes and metadata
+            required for decompression
         """
         audio_signal = audio_path_or_signal
         if isinstance(audio_signal, (str, Path)):
@@ -235,7 +236,21 @@ class CodecMixin:
         self,
         obj: Union[str, Path, DACFile],
         verbose: bool = False,
-    ):
+    ) -> AudioSignal:
+        """Reconstruct audio from a given .dac file
+
+        Parameters
+        ----------
+        obj : Union[str, Path, DACFile]
+            .dac file location or corresponding DACFile object.
+        verbose : bool, optional
+            Prints progress if True, by default False
+
+        Returns
+        -------
+        AudioSignal
+            Object with the reconstructed audio
+        """
         self.eval()
         if isinstance(obj, (str, Path)):
             obj = DACFile.load(obj)
