@@ -149,6 +149,9 @@ def load(
     generator = DAC() if generator is None else generator
     discriminator = Discriminator() if discriminator is None else discriminator
 
+    tracker.print(generator)
+    tracker.print(discriminator)
+
     generator = accel.prepare_model(generator)
     discriminator = accel.prepare_model(discriminator)
 
@@ -208,8 +211,8 @@ def val_loop(batch, state, accel):
         batch["signal"].clone(), **batch["transform_args"]
     )
 
-    recons = state.generator(signal.audio_data, signal.sample_rate)["audio"]
-    recons = AudioSignal(recons, signal.sample_rate)
+    out = state.generator(signal.audio_data, signal.sample_rate)
+    recons = AudioSignal(out["audio"], signal.sample_rate)
 
     return {
         "loss": state.mel_loss(recons, signal),
@@ -320,8 +323,8 @@ def save_samples(state, val_idx, writer):
         batch["signal"].clone(), **batch["transform_args"]
     )
 
-    recons = state.generator(signal.audio_data, signal.sample_rate)["audio"]
-    recons = AudioSignal(recons, signal.sample_rate)
+    out = state.generator(signal.audio_data, signal.sample_rate)
+    recons = AudioSignal(out["audio"], signal.sample_rate)
 
     audio_dict = {"recons": recons}
     if state.tracker.step == 0:
@@ -390,7 +393,7 @@ def train(
         num_workers=num_workers,
         batch_size=val_batch_size,
         collate_fn=state.val_data.collate,
-        persistent_workers=True,
+        persistent_workers=True if num_workers > 0 else False,
     )
 
     # Wrap the functions so that they neatly track in TensorBoard + progress bars

@@ -7,88 +7,10 @@ import torch
 from audiotools import AudioSignal
 from tqdm import tqdm
 
+from dac import DACFile
 from dac.utils import load_model
 
 warnings.filterwarnings("ignore", category=UserWarning)
-
-
-@torch.no_grad()
-@torch.inference_mode()
-def process(
-    artifacts: dict,
-    device: str,
-    generator: torch.nn.Module,
-    preserve_sample_rate: bool,
-) -> AudioSignal:
-    """Decode encoded audio. The `artifacts` contain codes from chunked windows
-    of the original audio signal. The codes are decoded one by one and windows are trimmed and concatenated together to form the final output.
-
-    Parameters
-    ----------
-    artifacts : dict
-        Dictionary of artifacts with the following keys:
-        - codes: the quantized codes
-        - metadata: dictionary with following keys
-            - original_db: the loudness of the input signal
-            - overlap_hop_duration: the hop duration of the overlap window
-            - original_length: the original length of the input signal
-            - is_overlap: whether the input signal was overlapped
-            - batch_size: the batch size of the input signal
-            - channels: the number of channels of the input signal
-            - original_sr: the original sample rate of the input signal
-    device : str
-        Device to use
-    generator : torch.nn.Module
-        Generator to decode with.
-    preserve_sample_rate : bool
-        If True, return audio will have the same sample rate as the original
-        encoded audio. If False, return audio will have the sample rate of the
-        generator.
-
-    Returns
-    -------
-    AudioSignal
-    """
-    if isinstance(generator, torch.nn.DataParallel):
-        generator = generator.module
-    audio_signal = AudioSignal(
-        artifacts["codes"].astype(np.int64), generator.sample_rate
-    )
-    metadata = artifacts["metadata"]
-
-    # Decode chunks
-    output = []
-    for i in range(audio_signal.batch_size):
-        signal_from_batch = AudioSignal(
-            audio_signal.audio_data[i, ...], audio_signal.sample_rate, device=device
-        )
-        z_q = generator.quantizer.from_codes(signal_from_batch.audio_data)[0]
-        audio = generator.decode(z_q)["audio"].cpu()
-        output.append(audio)
-
-    output = torch.cat(output, dim=0)
-    output_signal = AudioSignal(output, generator.sample_rate)
-
-    # Overlap and add
-    if metadata["is_overlap"]:
-        boundary = int(metadata["overlap_hop_duration"] * generator.sample_rate / 2)
-        # remove window overlap
-        output_signal.trim(boundary, boundary)
-        output_signal.audio_data = output_signal.audio_data.reshape(
-            metadata["batch_size"], metadata["channels"], -1
-        )
-        # remove padding
-        output_signal.trim(boundary, boundary)
-
-    # Restore loudness and truncate to original length
-    output_signal.ffmpeg_loudness()
-    output_signal = output_signal.normalize(metadata["original_db"])
-    output_signal.truncate_samples(metadata["original_length"])
-
-    if preserve_sample_rate:
-        output_signal = output_signal.ffmpeg_resample(metadata["original_sr"])
-
-    return output_signal.to("cpu")
 
 
 @argbind.bind(group="decode", positional=True, without_prefix=True)
@@ -99,9 +21,10 @@ def decode(
     output: str = "",
     weights_path: str = "",
     model_tag: str = "latest",
-    preserve_sample_rate: bool = False,
+    model_bitrate: str = "8kbps",
     device: str = "cuda",
     model_type: str = "44khz",
+    verbose: bool = False,
 ):
     """Decode audio from codes.
 
@@ -117,17 +40,18 @@ def decode(
         model_tag and model_type.
     model_tag : str, optional
         Tag of the model to use, by default "latest". Ignored if `weights_path` is specified.
-    preserve_sample_rate : bool, optional
-        If True, return audio will have the same sample rate as the original
+    model_bitrate: str
+        Bitrate of the model. Must be one of "8kbps", or "16kbps". Defaults to "8kbps".
     device : str, optional
         Device to use, by default "cuda". If "cpu", the model will be loaded on the CPU.
     model_type : str, optional
         The type of model to use. Must be one of "44khz", "24khz", or "16khz". Defaults to "44khz". Ignored if `weights_path` is specified.
     """
     generator = load_model(
+        model_type=model_type,
+        model_bitrate=model_bitrate,
         tag=model_tag,
         load_path=weights_path,
-        model_type=model_type,
     )
     generator.to(device)
     generator.eval()
@@ -146,10 +70,10 @@ def decode(
 
     for i in tqdm(range(len(input_files)), desc=f"Decoding files"):
         # Load file
-        artifacts = np.load(input_files[i], allow_pickle=True)[()]
+        artifact = DACFile.load(input_files[i])
 
         # Reconstruct audio from codes
-        recons = process(artifacts, device, generator, preserve_sample_rate)
+        recons = generator.decompress(artifact, verbose=verbose)
 
         # Compute output path
         relative_path = input_files[i].relative_to(input)
