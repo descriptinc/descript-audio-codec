@@ -126,7 +126,7 @@ class CodecMixin:
     def compress(
         self,
         audio_path_or_signal: Union[str, Path, AudioSignal],
-        win_duration: float = 1.0,
+        win_duration: float = 5.0,
         verbose: bool = False,
         normalize_db: float = -16,
         n_quantizers: int = None,
