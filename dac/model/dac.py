@@ -144,6 +144,38 @@ class Decoder(nn.Module):
         return self.model(x)
 
 
+class ConvReferenceEncoder(nn.Module):
+    def __init__(
+        self,
+        d_model: int = 64,
+        strides: list = [2, 4, 8, 8],
+        d_latent: int = 64,
+    ):
+        super().__init__()
+        self.encoder = Encoder(d_model, strides, d_latent)
+   
+    def forward(
+        self,
+        audio_data: torch.Tensor,
+    ):
+        """Model forward pass
+
+        Parameters
+        ----------
+        audio_data : Tensor[B x 1 x T]
+            Audio data to encode
+
+        Returns
+        -------
+        dict
+            A dictionary with the following keys:
+            "ref_encoding" : Tensor[B x D]
+                Quantized continuous representation of input
+        """
+        ref_encoding = self.encoder(audio_data)
+        return ref_encoding.mean(-1)
+
+
 class DAC(BaseModel, CodecMixin):
     def __init__(
         self,
@@ -152,6 +184,9 @@ class DAC(BaseModel, CodecMixin):
         latent_dim: int = None,
         decoder_dim: int = 1536,
         decoder_rates: List[int] = [8, 8, 4, 2],
+        ref_dim: int = 64,
+        ref_rates: List[int] = [2, 4, 8, 8],
+        ref_latent_dim: int = 16,
         n_codebooks: int = 9,
         codebook_size: int = 1024,
         codebook_dim: Union[int, list] = 8,
@@ -173,12 +208,17 @@ class DAC(BaseModel, CodecMixin):
 
         self.hop_length = np.prod(encoder_rates)
         self.encoder = Encoder(encoder_dim, encoder_rates, latent_dim)
-
+        if ref_dim is not None:
+            self.ref_encoder = ConvReferenceEncoder(ref_dim, ref_rates, ref_latent_dim)
+            self.combined_latent_dim = latent_dim + ref_latent_dim
+        else:
+            self.ref_encoder = None
+            self.combined_latent_dim = latent_dim
         self.n_codebooks = n_codebooks
         self.codebook_size = codebook_size
         self.codebook_dim = codebook_dim
         self.quantizer = ResidualVectorQuantize(
-            input_dim=latent_dim,
+            input_dim=self.combined_latent_dim,
             n_codebooks=n_codebooks,
             codebook_size=codebook_size,
             codebook_dim=codebook_dim,
@@ -186,7 +226,7 @@ class DAC(BaseModel, CodecMixin):
         )
 
         self.decoder = Decoder(
-            latent_dim,
+            self.combined_latent_dim,
             decoder_dim,
             decoder_rates,
         )
@@ -241,6 +281,9 @@ class DAC(BaseModel, CodecMixin):
                 Number of samples in input audio
         """
         z = self.encoder(audio_data)
+        if self.ref_encoder is not None:
+            ref_enc = self.ref_encoder(audio_data)
+            z = torch.cat([z, ref_enc.unsqueeze(-1).expand(-1, -1, z.shape[-1])], dim=1)
         z, codes, latents, commitment_loss, codebook_loss = self.quantizer(
             z, n_quantizers
         )
