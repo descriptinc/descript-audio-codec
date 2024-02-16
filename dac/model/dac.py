@@ -153,6 +153,7 @@ class ConvReferenceEncoder(nn.Module):
     ):
         super().__init__()
         self.encoder = Encoder(d_model, strides, d_latent)
+        self.out = nn.Linear(d_latent, d_latent)
    
     def forward(
         self,
@@ -172,8 +173,8 @@ class ConvReferenceEncoder(nn.Module):
             "ref_encoding" : Tensor[B x D]
                 Quantized continuous representation of input
         """
-        ref_encoding = self.encoder(audio_data)
-        return ref_encoding.mean(-1)
+        ref_encoding = self.encoder(audio_data).mean(-1)
+        return self.out(ref_encoding)
 
 
 class DAC(BaseModel, CodecMixin):
