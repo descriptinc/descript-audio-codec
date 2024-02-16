@@ -250,6 +250,7 @@ class DAC(BaseModel, CodecMixin):
     def encode(
         self,
         audio_data: torch.Tensor,
+        reference_audio_data: torch.Tensor,
         n_quantizers: int = None,
     ):
         """Encode given audio data and return quantized latent codes
@@ -258,6 +259,8 @@ class DAC(BaseModel, CodecMixin):
         ----------
         audio_data : Tensor[B x 1 x T]
             Audio data to encode
+        reference_audio_data : Tensor[B x 1 x T]
+            Audio data to encode for reference vector
         n_quantizers : int, optional
             Number of quantizers to use, by default None
             If None, all quantizers are used.
@@ -273,22 +276,24 @@ class DAC(BaseModel, CodecMixin):
                 (quantized discrete representation of input)
             "latents" : Tensor[B x N*D x T]
                 Projected latents (continuous representation of input before quantization)
+            "reference_vector" : Tensor[B x D]
+                Reference vector for each sample
             "vq/commitment_loss" : Tensor[1]
                 Commitment loss to train encoder to predict vectors closer to codebook
                 entries
             "vq/codebook_loss" : Tensor[1]
                 Codebook loss to update the codebook
-            "length" : int
-                Number of samples in input audio
         """
         z = self.encoder(audio_data)
         if self.ref_encoder is not None:
-            ref_enc = self.ref_encoder(audio_data)
-            z = torch.cat([z, ref_enc.unsqueeze(-1).expand(-1, -1, z.shape[-1])], dim=1)
+            ref_vector = self.ref_encoder(reference_audio_data)
+            z = torch.cat([z, ref_vector.unsqueeze(-1).expand(-1, -1, z.shape[-1])], dim=1)
+        else:
+            ref_vector = None
         z, codes, latents, commitment_loss, codebook_loss = self.quantizer(
             z, n_quantizers
         )
-        return z, codes, latents, commitment_loss, codebook_loss
+        return z, codes, latents, ref_vector, commitment_loss, codebook_loss
 
     def decode(self, z: torch.Tensor):
         """Decode given latent codes and return audio data
@@ -312,6 +317,7 @@ class DAC(BaseModel, CodecMixin):
     def forward(
         self,
         audio_data: torch.Tensor,
+        reference_audio_data: torch.Tensor,
         sample_rate: int = None,
         n_quantizers: int = None,
     ):
@@ -321,6 +327,8 @@ class DAC(BaseModel, CodecMixin):
         ----------
         audio_data : Tensor[B x 1 x T]
             Audio data to encode
+        reference_audio_data : Tensor[B x 1 x T]
+            Audio data to encode for reference vector
         sample_rate : int, optional
             Sample rate of audio data in Hz, by default None
             If None, defaults to `self.sample_rate`
@@ -348,11 +356,12 @@ class DAC(BaseModel, CodecMixin):
                 Number of samples in input audio
             "audio" : Tensor[B x 1 x length]
                 Decoded audio data.
+            "reference_vector" : Tensor[B x D]
         """
         length = audio_data.shape[-1]
         audio_data = self.preprocess(audio_data, sample_rate)
-        z, codes, latents, commitment_loss, codebook_loss = self.encode(
-            audio_data, n_quantizers
+        z, codes, latents, reference_vector, commitment_loss, codebook_loss = self.encode(
+            audio_data, reference_audio_data, n_quantizers
         )
 
         x = self.decode(z)
@@ -363,6 +372,7 @@ class DAC(BaseModel, CodecMixin):
             "latents": latents,
             "vq/commitment_loss": commitment_loss,
             "vq/codebook_loss": codebook_loss,
+            "reference_vector": reference_vector
         }
 
 

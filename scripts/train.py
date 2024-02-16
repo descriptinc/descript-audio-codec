@@ -115,6 +115,7 @@ class State:
     gan_loss: losses.GANLoss
     waveform_loss: losses.L1Loss
 
+    reference_length: float
     train_data: AudioDataset
     val_data: AudioDataset
 
@@ -130,6 +131,7 @@ def load(
     resume: bool = False,
     tag: str = "latest",
     load_weights: bool = False,
+    reference_length: float = 5.0
 ):
     generator, g_extra = None, {}
     discriminator, d_extra = None, {}
@@ -184,7 +186,6 @@ def load(
     stft_loss = losses.MultiScaleSTFTLoss()
     mel_loss = losses.MelSpectrogramLoss()
     gan_loss = losses.GANLoss(discriminator)
-
     return State(
         generator=generator,
         optimizer_g=optimizer_g,
@@ -199,6 +200,7 @@ def load(
         tracker=tracker,
         train_data=train_data,
         val_data=val_data,
+        reference_length=reference_length
     )
 
 
@@ -210,9 +212,10 @@ def val_loop(batch, state, accel):
     signal = state.val_data.transform(
         batch["signal"].clone(), **batch["transform_args"]
     )
-
-    out = state.generator(signal.audio_data, signal.sample_rate)
+    ref_signal, input_signal = dac.get_reference_audio(signal.audio_data, state.reference_length, signal.sample_rate)
+    out = state.generator(input_signal, ref_signal, signal.sample_rate)
     recons = AudioSignal(out["audio"], signal.sample_rate)
+    signal = AudioSignal(input_signal, signal.sample_rate)
 
     return {
         "loss": state.mel_loss(recons, signal),
@@ -233,9 +236,12 @@ def train_loop(state, batch, accel, lambdas):
         signal = state.train_data.transform(
             batch["signal"].clone(), **batch["transform_args"]
         )
+    ref_signal, input_signal = dac.get_reference_audio(signal.audio_data, state.reference_length, signal.sample_rate)
+    signal = AudioSignal(input_signal, signal.sample_rate)
 
     with accel.autocast():
-        out = state.generator(signal.audio_data, signal.sample_rate)
+        out = state.generator(input_signal, ref_signal, signal.sample_rate)
+        print(out["reference_vector"].shape)
         recons = AudioSignal(out["audio"], signal.sample_rate)
         commitment_loss = out["vq/commitment_loss"]
         codebook_loss = out["vq/codebook_loss"]
@@ -322,8 +328,10 @@ def save_samples(state, val_idx, writer):
     signal = state.train_data.transform(
         batch["signal"].clone(), **batch["transform_args"]
     )
+    ref_signal, input_signal = dac.get_reference_audio(signal.audio_data, state.reference_length, signal.sample_rate)
+    signal = AudioSignal(input_signal, signal.sample_rate)
 
-    out = state.generator(signal.audio_data, signal.sample_rate)
+    out = state.generator(input_signal, ref_signal, signal.sample_rate)
     recons = AudioSignal(out["audio"], signal.sample_rate)
 
     audio_dict = {"recons": recons}
@@ -354,7 +362,7 @@ def train(
     seed: int = 0,
     save_path: str = "ckpt",
     num_iters: int = 250000,
-    save_iters: list = [10000, 50000, 100000, 200000],
+    save_iters: list = [50000, 100000, 200000],
     sample_freq: int = 10000,
     valid_freq: int = 1000,
     batch_size: int = 12,
