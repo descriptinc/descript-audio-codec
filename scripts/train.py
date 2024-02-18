@@ -241,7 +241,6 @@ def train_loop(state, batch, accel, lambdas):
 
     with accel.autocast():
         out = state.generator(input_signal, ref_signal, signal.sample_rate)
-        print(out["reference_vector"].shape)
         recons = AudioSignal(out["audio"], signal.sample_rate)
         commitment_loss = out["vq/commitment_loss"]
         codebook_loss = out["vq/codebook_loss"]

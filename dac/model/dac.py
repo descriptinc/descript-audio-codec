@@ -5,6 +5,7 @@ from typing import Union
 import numpy as np
 import torch
 from audiotools import AudioSignal
+from audiotools import STFTParams
 from audiotools.ml import BaseModel
 from torch import nn
 
@@ -12,6 +13,7 @@ from .base import CodecMixin
 from dac.nn.layers import Snake1d
 from dac.nn.layers import WNConv1d
 from dac.nn.layers import WNConvTranspose1d
+from dac.nn.layers import WNConv2d
 from dac.nn.quantize import ResidualVectorQuantize
 
 
@@ -175,6 +177,55 @@ class ConvReferenceEncoder(nn.Module):
         """
         ref_encoding = self.encoder(audio_data).mean(-1)
         return self.out(ref_encoding)
+    
+
+class MelReferenceEncoder(nn.Module):
+    def __init__(
+        self,
+        n_mels: int = 150,
+        window_length: int = 2048,
+        pow: float = 2.0,
+        match_stride: bool = False,
+        mel_fmin: float = 0.0,
+        mel_fmax: float = None,
+        window_type: str = None,
+        channels: int = 32,
+        latent_dim: int = 64
+    ):
+        super().__init__()
+
+        self.stft_params = STFTParams(
+                                window_length=window_length,
+                                hop_length=window_length // 4,
+                                match_stride=match_stride,
+                                window_type=window_type,
+                            )
+                        
+        self.n_mels = n_mels
+        self.mel_fmin = mel_fmin
+        self.mel_fmax = mel_fmax
+        self.pow = pow
+
+        self.convs = nn.Sequential(
+                WNConv2d(1, channels, (3, 3), (1, 1), padding=(0, 1)),
+                WNConv2d(channels, channels, (3, 3), (2, 1), padding=(0, 1)),
+                WNConv2d(channels, channels, (3, 3), (2, 1), padding=(0, 1)),
+                WNConv2d(channels, channels, (3, 3), (2, 1), padding=(0, 1)),
+                WNConv2d(channels, channels, (3, 3), (2, 1), padding=(0, 1)),
+        )
+        self.out = nn.Linear(channels, latent_dim)
+
+    def forward(self, x, sample_rate):
+        x = AudioSignal(x, sample_rate)
+        kwargs = {
+            "window_length": self.stft_params.window_length,
+            "hop_length": self.stft_params.hop_length,
+            "window_type": self.stft_params.window_type,
+        }
+        x_mels = x.mel_spectrogram(self.n_mels, mel_fmin=self.mel_fmin, mel_fmax=self.mel_fmax, **kwargs)
+        x_mels = self.convs(x_mels)
+        x_mels = x_mels.mean(dim=-2).mean(dim=-1)
+        return self.out(x_mels)
 
 
 class DAC(BaseModel, CodecMixin):
@@ -186,7 +237,6 @@ class DAC(BaseModel, CodecMixin):
         decoder_dim: int = 1536,
         decoder_rates: List[int] = [8, 8, 4, 2],
         ref_dim: int = 64,
-        ref_rates: List[int] = [2, 4, 8, 8],
         ref_latent_dim: int = 16,
         n_codebooks: int = 9,
         codebook_size: int = 1024,
@@ -210,7 +260,7 @@ class DAC(BaseModel, CodecMixin):
         self.hop_length = np.prod(encoder_rates)
         self.encoder = Encoder(encoder_dim, encoder_rates, latent_dim)
         if ref_dim is not None:
-            self.ref_encoder = ConvReferenceEncoder(ref_dim, ref_rates, ref_latent_dim)
+            self.ref_encoder = MelReferenceEncoder(channels=ref_dim, latent_dim=ref_latent_dim)
             self.combined_latent_dim = latent_dim + ref_latent_dim
         else:
             self.ref_encoder = None
@@ -286,7 +336,7 @@ class DAC(BaseModel, CodecMixin):
         """
         z = self.encoder(audio_data)
         if self.ref_encoder is not None:
-            ref_vector = self.ref_encoder(reference_audio_data)
+            ref_vector = self.ref_encoder(reference_audio_data, self.sample_rate)
             z = torch.cat([z, ref_vector.unsqueeze(-1).expand(-1, -1, z.shape[-1])], dim=1)
         else:
             ref_vector = None

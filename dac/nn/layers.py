@@ -14,6 +14,13 @@ def WNConvTranspose1d(*args, **kwargs):
     return weight_norm(nn.ConvTranspose1d(*args, **kwargs))
 
 
+def WNConv2d(*args, **kwargs):
+    act = kwargs.pop("act", True)
+    conv = weight_norm(nn.Conv2d(*args, **kwargs))
+    if not act:
+        return conv
+    return nn.Sequential(conv, nn.LeakyReLU(0.1))
+
 # Scripting this brings model speed up 1.4x
 @torch.jit.script
 def snake(x, alpha):
