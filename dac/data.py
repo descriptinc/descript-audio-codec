@@ -7,7 +7,8 @@ from torch import Tensor
 def get_reference_audio(
     audio: Tensor,
     reference_length: float = 5.0,
-    sample_rate: int = 16000
+    sample_rate: int = 16000,
+    ref_side: str = None
 ) -> Tuple[Tensor, Tensor]:
     """
 
@@ -25,7 +26,8 @@ def get_reference_audio(
     audio : Tensor[B x 1 x T]
         Codec input audio
     """
-    ref_side = np.random.choice(["prefix", "suffix"])
+    if ref_side is None:
+        ref_side = np.random.choice(["prefix", "suffix"])
     reference_index = int(reference_length * sample_rate)
     if ref_side == "prefix":
         return audio[..., :reference_index], audio[..., reference_index:]

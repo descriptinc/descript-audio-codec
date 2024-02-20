@@ -17,7 +17,6 @@ from audiotools.ml.decorators import timer
 from audiotools.ml.decorators import Tracker
 from audiotools.ml.decorators import when
 from torch.utils.tensorboard import SummaryWriter
-
 import dac
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -327,7 +326,12 @@ def save_samples(state, val_idx, writer):
     signal = state.train_data.transform(
         batch["signal"].clone(), **batch["transform_args"]
     )
-    ref_signal, input_signal = dac.get_reference_audio(signal.audio_data, state.reference_length, signal.sample_rate)
+    ref_signal, input_signal = dac.get_reference_audio(
+        signal.audio_data,
+        state.reference_length,
+        signal.sample_rate,
+        "prefix"
+    )
     signal = AudioSignal(input_signal, signal.sample_rate)
 
     out = state.generator(input_signal, ref_signal, signal.sample_rate)
