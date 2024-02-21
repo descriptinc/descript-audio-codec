@@ -243,6 +243,7 @@ class DAC(BaseModel, CodecMixin):
         codebook_dim: Union[int, list] = 8,
         quantizer_dropout: bool = False,
         sample_rate: int = 44100,
+        enc_sample_rate: int = 16000
     ):
         super().__init__()
 
@@ -251,6 +252,8 @@ class DAC(BaseModel, CodecMixin):
         self.decoder_dim = decoder_dim
         self.decoder_rates = decoder_rates
         self.sample_rate = sample_rate
+        self.enc_sample_rate = enc_sample_rate
+        self.upsampling_rate = sample_rate // enc_sample_rate
 
         if latent_dim is None:
             latent_dim = encoder_dim * (2 ** len(encoder_rates))
@@ -281,7 +284,6 @@ class DAC(BaseModel, CodecMixin):
             decoder_dim,
             decoder_rates,
         )
-        self.sample_rate = sample_rate
         self.apply(init_weights)
 
         self.delay = self.get_delay()
@@ -416,7 +418,7 @@ class DAC(BaseModel, CodecMixin):
 
         x = self.decode(z)
         return {
-            "audio": x[..., :length],
+            "audio": x[..., :length*self.upsampling_rate],
             "z": z,
             "codes": codes,
             "latents": latents,

@@ -115,6 +115,7 @@ class State:
     waveform_loss: losses.L1Loss
 
     reference_length: float
+    lowres_sample_rate: int
     train_data: AudioDataset
     val_data: AudioDataset
 
@@ -130,7 +131,8 @@ def load(
     resume: bool = False,
     tag: str = "latest",
     load_weights: bool = False,
-    reference_length: float = 5.0
+    reference_length: float = 5.0,
+    lowres_sample_rate: int = 16000
 ):
     generator, g_extra = None, {}
     discriminator, d_extra = None, {}
@@ -199,7 +201,8 @@ def load(
         tracker=tracker,
         train_data=train_data,
         val_data=val_data,
-        reference_length=reference_length
+        reference_length=reference_length,
+        lowres_sample_rate=lowres_sample_rate
     )
 
 
@@ -212,9 +215,10 @@ def val_loop(batch, state, accel):
         batch["signal"].clone(), **batch["transform_args"]
     )
     ref_signal, input_signal = dac.get_reference_audio(signal.audio_data, state.reference_length, signal.sample_rate)
-    out = state.generator(input_signal, ref_signal, signal.sample_rate)
-    recons = AudioSignal(out["audio"], signal.sample_rate)
     signal = AudioSignal(input_signal, signal.sample_rate)
+    input_signal_lowres = signal.deepcopy().resample(state.lowres_sample_rate)
+    out = state.generator(input_signal_lowres.audio_data, ref_signal, signal.sample_rate)
+    recons = AudioSignal(out["audio"], signal.sample_rate)
 
     return {
         "loss": state.mel_loss(recons, signal),
@@ -237,9 +241,10 @@ def train_loop(state, batch, accel, lambdas):
         )
     ref_signal, input_signal = dac.get_reference_audio(signal.audio_data, state.reference_length, signal.sample_rate)
     signal = AudioSignal(input_signal, signal.sample_rate)
+    input_signal_lowres = signal.deepcopy().resample(state.lowres_sample_rate)
 
     with accel.autocast():
-        out = state.generator(input_signal, ref_signal, signal.sample_rate)
+        out = state.generator(input_signal_lowres.audio_data, ref_signal, signal.sample_rate)
         recons = AudioSignal(out["audio"], signal.sample_rate)
         commitment_loss = out["vq/commitment_loss"]
         codebook_loss = out["vq/codebook_loss"]
@@ -333,8 +338,8 @@ def save_samples(state, val_idx, writer):
         "prefix"
     )
     signal = AudioSignal(input_signal, signal.sample_rate)
-
-    out = state.generator(input_signal, ref_signal, signal.sample_rate)
+    input_signal_lowres = signal.deepcopy().resample(state.lowres_sample_rate)
+    out = state.generator(input_signal_lowres.audio_data, ref_signal, signal.sample_rate)
     recons = AudioSignal(out["audio"], signal.sample_rate)
 
     audio_dict = {"recons": recons}
