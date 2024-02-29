@@ -146,86 +146,59 @@ class Decoder(nn.Module):
         return self.model(x)
 
 
-class ConvReferenceEncoder(nn.Module):
+class StyleEncoder(nn.Module):
+    """Encodes a reference waveform into a flat vector"""
+
     def __init__(
         self,
+        encoder_dim: int = 1024,
+        encoder_path: str = "",
         d_model: int = 64,
-        strides: list = [2, 4, 8, 8],
-        d_latent: int = 64,
+        n_heads: int = 8,
+        n_layers: int = 2,
+        d_out: int = 128,
     ):
         super().__init__()
-        self.encoder = Encoder(d_model, strides, d_latent)
-        self.out = nn.Linear(d_latent, d_latent)
-   
-    def forward(
-        self,
-        audio_data: torch.Tensor,
-    ):
-        """Model forward pass
+        self.encoder_dim = encoder_dim
+        self.d_model = d_model
+        self.n_layers = n_layers
+        self.d_out = d_out
+
+        # is of class Encoder (ie. if Encoder class above is modified from original DAC, it will cause errors when loading)
+        self.encoder = torch.load(encoder_path)
+
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+
+        self.projection = nn.Linear(encoder_dim, d_model)
+        encoder_layer = nn.TransformerEncoderLayer(d_model, n_heads, dim_feedforward=d_model*4)
+        self.transformer = nn.TransformerEncoder(encoder_layer, n_layers)
+        self.linear = nn.Linear(d_model, d_out)
+
+    def forward(self, ref_audio):
+        """Produces a flat "style encoding" of reference audio
+        represented as acoustic tokens from soundstream
 
         Parameters
         ----------
-        audio_data : Tensor[B x 1 x T]
-            Audio data to encode
+        ref_audio : Tensor[B x 1 x T]
 
         Returns
         -------
-        dict
-            A dictionary with the following keys:
-            "ref_encoding" : Tensor[B x D]
-                Quantized continuous representation of input
+        Tensor[B x D_out]
+            Style encoding of input codess
         """
-        ref_encoding = self.encoder(audio_data).mean(-1)
-        return self.out(ref_encoding)
-    
+        z = self.encoder(ref_audio).transpose(1, 2)  # [B x D x T] -> [B x T x D]
+        z = self.projection(z)
+        hidden = self.transformer(z)
 
-class MelReferenceEncoder(nn.Module):
-    def __init__(
-        self,
-        n_mels: int = 150,
-        window_length: int = 2048,
-        pow: float = 2.0,
-        match_stride: bool = False,
-        mel_fmin: float = 0.0,
-        mel_fmax: float = None,
-        window_type: str = None,
-        channels: int = 32,
-        latent_dim: int = 64
-    ):
-        super().__init__()
+        # Compute avg pooling across timesteps
+        hidden_avg = hidden.mean(1)
 
-        self.stft_params = STFTParams(
-                                window_length=window_length,
-                                hop_length=window_length // 4,
-                                match_stride=match_stride,
-                                window_type=window_type,
-                            )
-                        
-        self.n_mels = n_mels
-        self.mel_fmin = mel_fmin
-        self.mel_fmax = mel_fmax
-        self.pow = pow
+        # Compute flat style vector
+        style = self.linear(hidden_avg)
 
-        self.convs = nn.Sequential(
-                WNConv2d(1, channels, (3, 3), (1, 1), padding=(0, 1)),
-                WNConv2d(channels, channels, (3, 3), (2, 1), padding=(0, 1)),
-                WNConv2d(channels, channels, (3, 3), (2, 1), padding=(0, 1)),
-                WNConv2d(channels, channels, (3, 3), (2, 1), padding=(0, 1)),
-                WNConv2d(channels, channels, (3, 3), (2, 1), padding=(0, 1)),
-        )
-        self.out = nn.Linear(channels, latent_dim)
-
-    def forward(self, x, sample_rate):
-        x = AudioSignal(x, sample_rate)
-        kwargs = {
-            "window_length": self.stft_params.window_length,
-            "hop_length": self.stft_params.hop_length,
-            "window_type": self.stft_params.window_type,
-        }
-        x_mels = x.mel_spectrogram(self.n_mels, mel_fmin=self.mel_fmin, mel_fmax=self.mel_fmax, **kwargs)
-        x_mels = self.convs(x_mels)
-        x_mels = x_mels.mean(dim=-2).mean(dim=-1)
-        return self.out(x_mels)
+        return style
 
 
 class DAC(BaseModel, CodecMixin):
@@ -236,8 +209,11 @@ class DAC(BaseModel, CodecMixin):
         latent_dim: int = None,
         decoder_dim: int = 1536,
         decoder_rates: List[int] = [8, 8, 4, 2],
-        ref_dim: int = 64,
-        ref_latent_dim: int = 16,
+        ref_encoder_dim: int = 1024,
+        ref_encoder_path: str = "",
+        ref_d_model: int = 64,
+        ref_n_layers: int = 2,
+        ref_out_dim: int = 128,
         n_codebooks: int = 9,
         codebook_size: int = 1024,
         codebook_dim: Union[int, list] = 8,
@@ -259,9 +235,15 @@ class DAC(BaseModel, CodecMixin):
 
         self.hop_length = np.prod(encoder_rates)
         self.encoder = Encoder(encoder_dim, encoder_rates, latent_dim)
-        if ref_dim is not None:
-            self.ref_encoder = MelReferenceEncoder(channels=ref_dim, latent_dim=ref_latent_dim)
-            self.combined_latent_dim = latent_dim + ref_latent_dim
+        if ref_encoder_path is not None:
+            self.ref_encoder = StyleEncoder(
+                encoder_dim=ref_encoder_dim,
+                encoder_path=ref_encoder_path,
+                d_model=ref_d_model,
+                n_layers=ref_n_layers,
+                d_out=ref_out_dim
+            )
+            self.combined_latent_dim = latent_dim + ref_out_dim
         else:
             self.ref_encoder = None
             self.combined_latent_dim = latent_dim
@@ -269,13 +251,12 @@ class DAC(BaseModel, CodecMixin):
         self.codebook_size = codebook_size
         self.codebook_dim = codebook_dim
         self.quantizer = ResidualVectorQuantize(
-            input_dim=self.combined_latent_dim,
+            input_dim=latent_dim,
             n_codebooks=n_codebooks,
             codebook_size=codebook_size,
             codebook_dim=codebook_dim,
             quantizer_dropout=quantizer_dropout,
         )
-
         self.decoder = Decoder(
             self.combined_latent_dim,
             decoder_dim,
@@ -335,14 +316,14 @@ class DAC(BaseModel, CodecMixin):
                 Codebook loss to update the codebook
         """
         z = self.encoder(audio_data)
-        if self.ref_encoder is not None:
-            ref_vector = self.ref_encoder(reference_audio_data, self.sample_rate)
-            z = torch.cat([z, ref_vector.unsqueeze(-1).expand(-1, -1, z.shape[-1])], dim=1)
-        else:
-            ref_vector = None
         z, codes, latents, commitment_loss, codebook_loss = self.quantizer(
             z, n_quantizers
         )
+        if self.ref_encoder is not None:
+            ref_vector = self.ref_encoder(reference_audio_data)
+            z = torch.cat([z, ref_vector.unsqueeze(-1).expand(-1, -1, z.shape[-1])], dim=1)
+        else:
+            ref_vector = None
         return z, codes, latents, ref_vector, commitment_loss, codebook_loss
 
     def decode(self, z: torch.Tensor):
