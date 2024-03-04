@@ -16,21 +16,27 @@ def main(
 ):
     files = at.util.find_audio(folder)[:n_samples]
     signals = [
-        at.AudioSignal.salient_excerpt(f, loudness_cutoff=-20, duration=1.0)
+        (at.AudioSignal.salient_excerpt(f, loudness_cutoff=-20, duration=6.0))
         for f in files
     ]
+    print(len(signals))
 
     with torch.no_grad():
-        model = dac.model.DAC.load(model_path).to(device)
-        model.eval()
+        model = dac.model.DAC.load(model_path)
+        model.ref_encoder.encoder = torch.load("/data/joseph/dac_encoder.pt")
+        model.to(device).eval()
 
         codes = []
         for x in tqdm.tqdm(signals):
             x = x.to(model.device)
-            o = model.encode(x.audio_data, x.sample_rate)
-            codes.append(o["codes"].cpu())
+            if x.signal_duration >= 6.0:
+                ref_signal, input_signal = dac.get_reference_audio(x.audio_data, 5.0, x.sample_rate)
+                signal = at.AudioSignal(input_signal, x.sample_rate).resample(model.sample_rate)
+                o = model.encode(signal.audio_data, ref_signal)
+                codes.append(o[1].cpu())
 
         codes = torch.cat(codes, dim=-1)
+        print(codes.shape)
         entropy = []
 
         for i in range(codes.shape[1]):

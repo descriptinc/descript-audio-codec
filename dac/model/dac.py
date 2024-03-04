@@ -153,22 +153,23 @@ class StyleEncoder(nn.Module):
         self,
         encoder_dim: int = 1024,
         encoder_path: str = "",
-        d_model: int = 64,
+        d_model: int = 128,
         n_heads: int = 8,
         n_layers: int = 2,
         d_out: int = 128,
     ):
         super().__init__()
+        d_model = 128
         self.encoder_dim = encoder_dim
         self.d_model = d_model
         self.n_layers = n_layers
         self.d_out = d_out
 
         # is of class Encoder (ie. if Encoder class above is modified from original DAC, it will cause errors when loading)
-        self.encoder = torch.load(encoder_path)
-
-        for param in self.encoder.parameters():
-            param.requires_grad = False
+        if encoder_path is not None and not encoder_path == "":
+            self.encoder = torch.load(encoder_path)
+            for param in self.encoder.parameters():
+                param.requires_grad = False
 
         self.projection = nn.Linear(encoder_dim, d_model)
         encoder_layer = nn.TransformerEncoderLayer(d_model, n_heads, dim_feedforward=d_model*4)
