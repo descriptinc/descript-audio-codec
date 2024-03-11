@@ -15,3 +15,4 @@ from . import utils
 from .data import *
 from .model import DAC
 from .model import DACFile
+from .model import DACNestedCodec

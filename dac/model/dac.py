@@ -5,15 +5,13 @@ from typing import Union
 import numpy as np
 import torch
 from audiotools import AudioSignal
-from audiotools import STFTParams
 from audiotools.ml import BaseModel
 from torch import nn
 
-from .base import CodecMixin
+from dac.model.base import CodecMixin
 from dac.nn.layers import Snake1d
 from dac.nn.layers import WNConv1d
 from dac.nn.layers import WNConvTranspose1d
-from dac.nn.layers import WNConv2d
 from dac.nn.quantize import ResidualVectorQuantize
 
 
@@ -69,10 +67,11 @@ class Encoder(nn.Module):
         d_model: int = 64,
         strides: list = [2, 4, 8, 8],
         d_latent: int = 64,
+        d_in: int = 1
     ):
         super().__init__()
         # Create first convolution
-        self.block = [WNConv1d(1, d_model, kernel_size=7, padding=3)]
+        self.block = [WNConv1d(d_in, d_model, kernel_size=7, padding=3)]
 
         # Create EncoderBlocks that double channels as they downsample by `stride`
         for stride in strides:
@@ -152,44 +151,36 @@ class StyleEncoder(nn.Module):
     def __init__(
         self,
         encoder_dim: int = 1024,
-        encoder_path: str = "",
         d_model: int = 128,
         n_heads: int = 8,
         n_layers: int = 2,
         d_out: int = 128,
     ):
         super().__init__()
-        d_model = 128
         self.encoder_dim = encoder_dim
         self.d_model = d_model
         self.n_layers = n_layers
         self.d_out = d_out
-
-        # is of class Encoder (ie. if Encoder class above is modified from original DAC, it will cause errors when loading)
-        if encoder_path is not None and not encoder_path == "":
-            self.encoder = torch.load(encoder_path)
-            for param in self.encoder.parameters():
-                param.requires_grad = False
 
         self.projection = nn.Linear(encoder_dim, d_model)
         encoder_layer = nn.TransformerEncoderLayer(d_model, n_heads, dim_feedforward=d_model*4)
         self.transformer = nn.TransformerEncoder(encoder_layer, n_layers)
         self.linear = nn.Linear(d_model, d_out)
 
-    def forward(self, ref_audio):
+    def forward(self, codes):
         """Produces a flat "style encoding" of reference audio
-        represented as acoustic tokens from soundstream
+        represented as acoustic tokens
 
         Parameters
         ----------
-        ref_audio : Tensor[B x 1 x T]
+        codes : Tensor[B x D x T]
 
         Returns
         -------
         Tensor[B x D_out]
             Style encoding of input codess
         """
-        z = self.encoder(ref_audio).transpose(1, 2)  # [B x D x T] -> [B x T x D]
+        z = codes.transpose(1, 2)  # [B x D x T] -> [B x T x D]
         z = self.projection(z)
         hidden = self.transformer(z)
 
@@ -210,11 +201,6 @@ class DAC(BaseModel, CodecMixin):
         latent_dim: int = None,
         decoder_dim: int = 1536,
         decoder_rates: List[int] = [8, 8, 4, 2],
-        ref_encoder_dim: int = 1024,
-        ref_encoder_path: str = "",
-        ref_d_model: int = 64,
-        ref_n_layers: int = 2,
-        ref_out_dim: int = 128,
         n_codebooks: int = 9,
         codebook_size: int = 1024,
         codebook_dim: Union[int, list] = 8,
@@ -236,18 +222,7 @@ class DAC(BaseModel, CodecMixin):
 
         self.hop_length = np.prod(encoder_rates)
         self.encoder = Encoder(encoder_dim, encoder_rates, latent_dim)
-        if ref_encoder_path is not None:
-            self.ref_encoder = StyleEncoder(
-                encoder_dim=ref_encoder_dim,
-                encoder_path=ref_encoder_path,
-                d_model=ref_d_model,
-                n_layers=ref_n_layers,
-                d_out=ref_out_dim
-            )
-            self.combined_latent_dim = latent_dim + ref_out_dim
-        else:
-            self.ref_encoder = None
-            self.combined_latent_dim = latent_dim
+
         self.n_codebooks = n_codebooks
         self.codebook_size = codebook_size
         self.codebook_dim = codebook_dim
@@ -258,8 +233,9 @@ class DAC(BaseModel, CodecMixin):
             codebook_dim=codebook_dim,
             quantizer_dropout=quantizer_dropout,
         )
+
         self.decoder = Decoder(
-            self.combined_latent_dim,
+            latent_dim,
             decoder_dim,
             decoder_rates,
         )
@@ -282,7 +258,6 @@ class DAC(BaseModel, CodecMixin):
     def encode(
         self,
         audio_data: torch.Tensor,
-        reference_audio_data: torch.Tensor,
         n_quantizers: int = None,
     ):
         """Encode given audio data and return quantized latent codes
@@ -291,8 +266,6 @@ class DAC(BaseModel, CodecMixin):
         ----------
         audio_data : Tensor[B x 1 x T]
             Audio data to encode
-        reference_audio_data : Tensor[B x 1 x T]
-            Audio data to encode for reference vector
         n_quantizers : int, optional
             Number of quantizers to use, by default None
             If None, all quantizers are used.
@@ -308,24 +281,19 @@ class DAC(BaseModel, CodecMixin):
                 (quantized discrete representation of input)
             "latents" : Tensor[B x N*D x T]
                 Projected latents (continuous representation of input before quantization)
-            "reference_vector" : Tensor[B x D]
-                Reference vector for each sample
             "vq/commitment_loss" : Tensor[1]
                 Commitment loss to train encoder to predict vectors closer to codebook
                 entries
             "vq/codebook_loss" : Tensor[1]
                 Codebook loss to update the codebook
+            "length" : int
+                Number of samples in input audio
         """
         z = self.encoder(audio_data)
         z, codes, latents, commitment_loss, codebook_loss = self.quantizer(
             z, n_quantizers
         )
-        if self.ref_encoder is not None:
-            ref_vector = self.ref_encoder(reference_audio_data)
-            z = torch.cat([z, ref_vector.unsqueeze(-1).expand(-1, -1, z.shape[-1])], dim=1)
-        else:
-            ref_vector = None
-        return z, codes, latents, ref_vector, commitment_loss, codebook_loss
+        return z, codes, latents, commitment_loss, codebook_loss
 
     def decode(self, z: torch.Tensor):
         """Decode given latent codes and return audio data
@@ -349,7 +317,6 @@ class DAC(BaseModel, CodecMixin):
     def forward(
         self,
         audio_data: torch.Tensor,
-        reference_audio_data: torch.Tensor,
         sample_rate: int = None,
         n_quantizers: int = None,
     ):
@@ -359,8 +326,6 @@ class DAC(BaseModel, CodecMixin):
         ----------
         audio_data : Tensor[B x 1 x T]
             Audio data to encode
-        reference_audio_data : Tensor[B x 1 x T]
-            Audio data to encode for reference vector
         sample_rate : int, optional
             Sample rate of audio data in Hz, by default None
             If None, defaults to `self.sample_rate`
@@ -388,12 +353,11 @@ class DAC(BaseModel, CodecMixin):
                 Number of samples in input audio
             "audio" : Tensor[B x 1 x length]
                 Decoded audio data.
-            "reference_vector" : Tensor[B x D]
         """
         length = audio_data.shape[-1]
         audio_data = self.preprocess(audio_data, sample_rate)
-        z, codes, latents, reference_vector, commitment_loss, codebook_loss = self.encode(
-            audio_data, reference_audio_data, n_quantizers
+        z, codes, latents, commitment_loss, codebook_loss = self.encode(
+            audio_data, n_quantizers
         )
 
         x = self.decode(z)
@@ -401,6 +365,207 @@ class DAC(BaseModel, CodecMixin):
             "audio": x[..., :length],
             "z": z,
             "codes": codes,
+            "latents": latents,
+            "vq/commitment_loss": commitment_loss,
+            "vq/codebook_loss": codebook_loss,
+        }
+
+
+class DACNestedCodec(BaseModel):
+    def __init__(
+        self,
+        vocab_size: int = 1024,
+        n_token_levels: int = 12,
+        token_emb_dim: int = 256,
+        encoder_dim: int = 64,
+        encoder_rates: List[int] = [2, 4, 8, 8],
+        latent_dim: int = None,
+        decoder_dim: int = 1536,
+        decoder_rates: List[int] = [8, 8, 4, 2],
+        ref_d_model: int = 64,
+        ref_n_layers: int = 2,
+        ref_out_dim: int = 128,
+        n_codebooks: int = 9,
+        codebook_size: int = 1024,
+        codebook_dim: Union[int, list] = 8,
+        sample_rate: int = 16000,
+        quantizer_dropout: bool = False,
+    ):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.n_token_levels = n_token_levels
+        self.token_emb_dim = token_emb_dim
+        self.encoder_dim = encoder_dim
+        self.encoder_rates = encoder_rates
+        self.decoder_dim = decoder_dim
+        self.decoder_rates = decoder_rates
+        self.sample_rate = sample_rate
+
+        if latent_dim is None:
+            latent_dim = encoder_dim * (2 ** len(encoder_rates))
+
+        self.latent_dim = latent_dim
+
+        self.hop_length = np.prod(encoder_rates)
+
+        self.token_emb = nn.Embedding(self.vocab_size * self.n_token_levels, token_emb_dim)
+        self.register_buffer(
+            "token_offsets", torch.arange(self.n_token_levels)[None, :, None] * vocab_size
+        )
+
+        self.encoder = Encoder(encoder_dim, encoder_rates, latent_dim, token_emb_dim)
+        self.ref_encoder = StyleEncoder(
+            encoder_dim=token_emb_dim,
+            d_model=ref_d_model,
+            n_layers=ref_n_layers,
+            d_out=ref_out_dim
+        )
+        self.combined_latent_dim = latent_dim + ref_out_dim
+
+        self.n_codebooks = n_codebooks
+        self.codebook_size = codebook_size
+        self.codebook_dim = codebook_dim
+        self.quantizer = ResidualVectorQuantize(
+            input_dim=latent_dim,
+            n_codebooks=n_codebooks,
+            codebook_size=codebook_size,
+            codebook_dim=codebook_dim,
+            quantizer_dropout=quantizer_dropout,
+        )
+        self.decoder = Decoder(
+            self.combined_latent_dim,
+            decoder_dim,
+            decoder_rates,
+            decoder_dim
+        )
+        self.out_classifier = nn.Linear(decoder_dim, vocab_size*self.n_token_levels)
+        self.apply(init_weights)
+
+    def preprocess(self, codes):
+        length = codes.shape[-1]
+        right_pad = math.ceil(length / self.hop_length) * self.hop_length - length
+        codes = nn.functional.pad(codes, (0, right_pad))
+
+        return codes
+    
+    def encode(
+        self,
+        codes: torch.Tensor,
+        ref_codes: torch.Tensor,
+        n_quantizers: int = None,
+    ):
+        """Encode given codes and return quantized latent codes
+
+        Parameters
+        ----------
+        codes : Tensor[B x D x T]
+            input codes
+        ref_codes : Tensor[B x D x T]
+            codes for reference vector
+        n_quantizers : int, optional
+            Number of quantizers to use, by default None
+            If None, all quantizers are used.
+
+        Returns
+        -------
+        dict
+            A dictionary with the following keys:
+            "z" : Tensor[B x D x T]
+                Quantized continuous representation of input
+            "codes" : Tensor[B x N x T]
+                Codebook indices for each codebook
+                (quantized discrete representation of input)
+            "latents" : Tensor[B x N*D x T]
+                Projected latents (continuous representation of input before quantization)
+            "reference_vector" : Tensor[B x D]
+                Reference vector for each sample
+            "vq/commitment_loss" : Tensor[1]
+                Commitment loss to train encoder to predict vectors closer to codebook
+                entries
+            "vq/codebook_loss" : Tensor[1]
+                Codebook loss to update the codebook
+        """
+        codes_emb = self.token_emb(codes + self.token_offsets).sum(-3).transpose(1, 2)
+        codes_emb = self.preprocess(codes_emb)
+        z = self.encoder(codes_emb)
+
+        z, codes, latents, commitment_loss, codebook_loss = self.quantizer(
+            z, n_quantizers
+        )
+        if self.ref_encoder is not None:
+            ref_codes_emb = self.token_emb(ref_codes + self.token_offsets).sum(-3).transpose(1, 2)
+            ref_vector = self.ref_encoder(ref_codes_emb)
+            z = torch.cat([z, ref_vector.unsqueeze(-1).expand(-1, -1, z.shape[-1])], dim=1)
+        else:
+            ref_vector = None
+        return z, codes, latents, ref_vector, commitment_loss, codebook_loss
+
+    def decode(self, z: torch.Tensor):
+        """Decode given latent codes and return audio data
+
+        Parameters
+        ----------
+        z : Tensor[B x D x T]
+            Quantized continuous representation of input
+        length : int, optional
+            Number of samples in output audio, by default None
+
+        Returns
+        -------
+        Tensor[B x D x T]
+            
+        """
+        return self.decoder(z)
+
+    def forward(
+        self,
+        codes: torch.Tensor,
+        ref_codes: torch.Tensor,
+        n_quantizers: int = None,
+    ):
+        """Model forward pass
+
+        Parameters
+        ----------
+        codes : Tensor[B x D x T]
+            input codes
+        ref_codes : Tensor[B x D x T]
+            codes for reference vector
+        n_quantizers : int, optional
+            Number of quantizers to use, by default None.
+            If None, all quantizers are used.
+
+        Returns
+        -------
+        dict
+            A dictionary with the following keys:
+            "z" : Tensor[B x D x T]
+                Quantized continuous representation of input
+            "codes" : Tensor[B x N x T]
+                Codebook indices for each codebook
+                (quantized discrete representation of input)
+            "latents" : Tensor[B x N*D x T]
+                Projected latents (continuous representation of input before quantization)
+            "vq/commitment_loss" : Tensor[1]
+                Commitment loss to train encoder to predict vectors closer to codebook
+                entries
+            "vq/codebook_loss" : Tensor[1]
+                Codebook loss to update the codebook
+            "length" : int
+                Number of samples in input audio
+            "reference_vector" : Tensor[B x D]
+        """
+        length = codes.size(-1)
+        z, nested_codes, latents, reference_vector, commitment_loss, codebook_loss = self.encode(
+            codes, ref_codes, n_quantizers
+        )
+        x = self.decode(z)[..., :length]
+        x = x.transpose(1, 2)   # [B x N x T] -> [B x T x N]
+        logits = self.out_classifier(x)
+        return {
+            "logits": logits.reshape(codes.size(0), codes.size(2), self.n_token_levels, -1),
+            "z": z,
+            "codes": nested_codes,
             "latents": latents,
             "vq/commitment_loss": commitment_loss,
             "vq/codebook_loss": codebook_loss,

@@ -18,6 +18,8 @@ from audiotools.ml.decorators import Tracker
 from audiotools.ml.decorators import when
 from torch.utils.tensorboard import SummaryWriter
 import dac
+from dac.data import sample_from_logits
+
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -37,7 +39,7 @@ def ExponentialLR(optimizer, gamma: float = 1.0):
 
 
 # Models
-DAC = argbind.bind(dac.model.DAC)
+DACNestedCodec = argbind.bind(dac.model.DACNestedCodec)
 Discriminator = argbind.bind(dac.model.Discriminator)
 
 # Data
@@ -101,21 +103,22 @@ def build_dataset(
 
 @dataclass
 class State:
-    generator: DAC
+    generator: DACNestedCodec
     optimizer_g: AdamW
     scheduler_g: ExponentialLR
-
-    discriminator: Discriminator
-    optimizer_d: AdamW
-    scheduler_d: ExponentialLR
+    pretrained_dac: dac.model.DACNestedCodec
+    #discriminator: Discriminator
+    #optimizer_d: AdamW
+    #scheduler_d: ExponentialLR
 
     stft_loss: losses.MultiScaleSTFTLoss
     mel_loss: losses.MelSpectrogramLoss
-    gan_loss: losses.GANLoss
+    #gan_loss: losses.GANLoss
     waveform_loss: losses.L1Loss
+    cross_entropy: torch.nn.CrossEntropyLoss
 
     reference_length: float
-    model_sample_rate: int
+    codes_sample_rate: int
     train_data: AudioDataset
     val_data: AudioDataset
 
@@ -132,10 +135,11 @@ def load(
     tag: str = "latest",
     load_weights: bool = False,
     reference_length: float = 5.0,
-    full_sample_rate: int = 44100
+    pretrained_dac_tag: str = "16khz",
+    codes_sample_rate: int = 50
 ):
     generator, g_extra = None, {}
-    discriminator, d_extra = None, {}
+    # discriminator, d_extra = None, {}
 
     if resume:
         kwargs = {
@@ -145,25 +149,28 @@ def load(
         }
         tracker.print(f"Resuming from {str(Path('.').absolute())}/{kwargs['folder']}")
         if (Path(kwargs["folder"]) / "dac").exists():
-            generator, g_extra = DAC.load_from_folder(**kwargs)
-        if (Path(kwargs["folder"]) / "discriminator").exists():
-            discriminator, d_extra = Discriminator.load_from_folder(**kwargs)
+            generator, g_extra = DACNestedCodec.load_from_folder(**kwargs)
+        # if (Path(kwargs["folder"]) / "discriminator").exists():
+        #     discriminator, d_extra = Discriminator.load_from_folder(**kwargs)
 
-    generator = DAC() if generator is None else generator
-    discriminator = Discriminator() if discriminator is None else discriminator
+    generator = DACNestedCodec() if generator is None else generator
+    # discriminator = Discriminator() if discriminator is None else discriminator
+    dac_model_path = dac.utils.download(model_type=pretrained_dac_tag)
+    pretrained_dac = dac.DAC.load(dac_model_path)
 
     tracker.print(generator)
-    tracker.print(discriminator)
+    # tracker.print(discriminator)
 
     generator = accel.prepare_model(generator)
-    discriminator = accel.prepare_model(discriminator)
+    # discriminator = accel.prepare_model(discriminator)
+    pretrained_dac = accel.prepare_model(pretrained_dac)
 
     with argbind.scope(args, "generator"):
         optimizer_g = AdamW(generator.parameters(), use_zero=accel.use_ddp)
         scheduler_g = ExponentialLR(optimizer_g)
-    with argbind.scope(args, "discriminator"):
-        optimizer_d = AdamW(discriminator.parameters(), use_zero=accel.use_ddp)
-        scheduler_d = ExponentialLR(optimizer_d)
+    # with argbind.scope(args, "discriminator"):
+    #     optimizer_d = AdamW(discriminator.parameters(), use_zero=accel.use_ddp)
+    #     scheduler_d = ExponentialLR(optimizer_d)
 
     if "optimizer.pth" in g_extra:
         optimizer_g.load_state_dict(g_extra["optimizer.pth"])
@@ -172,37 +179,39 @@ def load(
     if "tracker.pth" in g_extra:
         tracker.load_state_dict(g_extra["tracker.pth"])
 
-    if "optimizer.pth" in d_extra:
-        optimizer_d.load_state_dict(d_extra["optimizer.pth"])
-    if "scheduler.pth" in d_extra:
-        scheduler_d.load_state_dict(d_extra["scheduler.pth"])
+    # if "optimizer.pth" in d_extra:
+    #     optimizer_d.load_state_dict(d_extra["optimizer.pth"])
+    # if "scheduler.pth" in d_extra:
+    #     scheduler_d.load_state_dict(d_extra["scheduler.pth"])
 
     model_sample_rate = accel.unwrap(generator).sample_rate
     with argbind.scope(args, "train"):
-        train_data = build_dataset(full_sample_rate)
+        train_data = build_dataset(model_sample_rate)
     with argbind.scope(args, "val"):
-        val_data = build_dataset(full_sample_rate)
+        val_data = build_dataset(model_sample_rate)
 
     waveform_loss = losses.L1Loss()
     stft_loss = losses.MultiScaleSTFTLoss()
     mel_loss = losses.MelSpectrogramLoss()
-    gan_loss = losses.GANLoss(discriminator)
+    # gan_loss = losses.GANLoss(discriminator)
     return State(
         generator=generator,
         optimizer_g=optimizer_g,
         scheduler_g=scheduler_g,
-        discriminator=discriminator,
-        optimizer_d=optimizer_d,
-        scheduler_d=scheduler_d,
+        # discriminator=discriminator,
+        pretrained_dac=pretrained_dac,
+        # optimizer_d=optimizer_d,
+        # scheduler_d=scheduler_d,
         waveform_loss=waveform_loss,
         stft_loss=stft_loss,
         mel_loss=mel_loss,
-        gan_loss=gan_loss,
+        # gan_loss=gan_loss,
         tracker=tracker,
         train_data=train_data,
         val_data=val_data,
         reference_length=reference_length,
-        model_sample_rate=model_sample_rate
+        codes_sample_rate=codes_sample_rate,
+        cross_entropy=torch.nn.CrossEntropyLoss()
     )
 
 
@@ -210,17 +219,32 @@ def load(
 @torch.no_grad()
 def val_loop(batch, state, accel):
     state.generator.eval()
+    state.pretrained_dac.eval()
     batch = util.prepare_batch(batch, accel.device)
     signal = state.val_data.transform(
         batch["signal"].clone(), **batch["transform_args"]
     )
-    ref_signal, input_signal = dac.get_reference_audio(signal.audio_data, state.reference_length, signal.sample_rate)
-    signal = AudioSignal(input_signal, signal.sample_rate).resample(state.model_sample_rate)
-    out = state.generator(signal.clone().audio_data, ref_signal)
-    recons = AudioSignal(out["audio"], signal.sample_rate)
+    audio_data = state.pretrained_dac.module.preprocess(signal.clone().audio_data, None)
+    _, codes, _, _, _ = state.pretrained_dac.module.encode(audio_data, n_quantizers=1)
+
+    ref_codes, input_codes, ref_side = dac.get_reference_audio(codes, state.reference_length, state.codes_sample_rate)
+    _, signal_audio, _ =  dac.get_reference_audio(signal.audio_data, state.reference_length, state.codes_sample_rate, ref_side=ref_side)
+    signal = AudioSignal(signal_audio, signal.sample_rate)    
+    
+    out = state.generator(input_codes, ref_codes)
+
+    z = state.pretrained_dac.module.quantizer.from_codes(sample_from_logits(out["logits"]).transpose(1, 2))[0]
+    recons = state.pretrained_dac.module.decode(z)
+    recons = AudioSignal(recons, signal.sample_rate)
+    true_z = state.pretrained_dac.module.quantizer.from_codes(input_codes)[0]
+    signal_audio = state.pretrained_dac.module.decode(true_z)
+    signal = AudioSignal(signal_audio, signal.sample_rate)
 
     return {
-        "loss": state.mel_loss(recons, signal),
+        "cross_entropy/loss": state.cross_entropy(
+            out["logits"].reshape(-1, out["logits"].size(-1)),
+            input_codes.reshape(-1)
+        ),
         "mel/loss": state.mel_loss(recons, signal),
         "stft/loss": state.stft_loss(recons, signal),
         "waveform/loss": state.waveform_loss(recons, signal),
@@ -230,7 +254,8 @@ def val_loop(batch, state, accel):
 @timer()
 def train_loop(state, batch, accel, lambdas):
     state.generator.train()
-    state.discriminator.train()
+    # state.discriminator.train()
+    state.pretrained_dac.eval()
     output = {}
 
     batch = util.prepare_batch(batch, accel.device)
@@ -238,9 +263,11 @@ def train_loop(state, batch, accel, lambdas):
         signal = state.train_data.transform(
             batch["signal"].clone(), **batch["transform_args"]
         )
-    ref_signal, input_signal = dac.get_reference_audio(signal.audio_data, state.reference_length, signal.sample_rate)
-    signal = AudioSignal(input_signal, signal.sample_rate).resample(state.model_sample_rate)
 
+        audio_data = state.pretrained_dac.module.preprocess(signal.clone().audio_data, None)
+        _, codes, _, _, _ = state.pretrained_dac.module.encode(audio_data, n_quantizers=1)
+        ref_codes, input_codes, _ = dac.get_reference_audio(codes, state.reference_length, state.codes_sample_rate)
+    """
     with accel.autocast():
         out = state.generator(signal.clone().audio_data, ref_signal)
         recons = AudioSignal(out["audio"], signal.sample_rate)
@@ -258,17 +285,30 @@ def train_loop(state, batch, accel, lambdas):
     )
     accel.step(state.optimizer_d)
     state.scheduler_d.step()
-
+    """
     with accel.autocast():
+        out = state.generator(input_codes, ref_codes)
+
+        z = state.pretrained_dac.module.quantizer.from_codes(sample_from_logits(out["logits"]).transpose(1, 2))[0]
+        recons = state.pretrained_dac.module.decode(z)
+        recons = AudioSignal(recons, signal.sample_rate)
+        true_z = state.pretrained_dac.module.quantizer.from_codes(input_codes)[0]
+        signal_audio = state.pretrained_dac.module.decode(true_z)
+        signal = AudioSignal(signal_audio, signal.sample_rate)
+
+        output["cross_entropy/loss"] = state.cross_entropy(
+            out["logits"].reshape(-1, out["logits"].size(-1)),
+            input_codes.transpose(1, 2).reshape(-1)
+        )
         output["stft/loss"] = state.stft_loss(recons, signal)
         output["mel/loss"] = state.mel_loss(recons, signal)
         output["waveform/loss"] = state.waveform_loss(recons, signal)
-        (
-            output["adv/gen_loss"],
-            output["adv/feat_loss"],
-        ) = state.gan_loss.generator_loss(recons, signal)
-        output["vq/commitment_loss"] = commitment_loss
-        output["vq/codebook_loss"] = codebook_loss
+        # (
+        #     output["adv/gen_loss"],
+        #     output["adv/feat_loss"],
+        # ) = state.gan_loss.generator_loss(recons, signal)
+        output["vq/commitment_loss"] = out["vq/commitment_loss"]
+        output["vq/codebook_loss"] = out["vq/codebook_loss"]
         output["loss"] = sum([v * output[k] for k, v in lambdas.items() if k in output])
 
     state.optimizer_g.zero_grad()
@@ -309,19 +349,20 @@ def checkpoint(state, save_iters, save_path):
         accel.unwrap(state.generator).save_to_folder(
             f"{save_path}/{tag}", generator_extra
         )
-        discriminator_extra = {
-            "optimizer.pth": state.optimizer_d.state_dict(),
-            "scheduler.pth": state.scheduler_d.state_dict(),
-        }
-        accel.unwrap(state.discriminator).save_to_folder(
-            f"{save_path}/{tag}", discriminator_extra
-        )
+        # discriminator_extra = {
+        #     "optimizer.pth": state.optimizer_d.state_dict(),
+        #     "scheduler.pth": state.scheduler_d.state_dict(),
+        # }
+        # accel.unwrap(state.discriminator).save_to_folder(
+        #    f"{save_path}/{tag}", discriminator_extra
+        # )
 
 
 @torch.no_grad()
 def save_samples(state, val_idx, writer):
     state.tracker.print("Saving audio samples to TensorBoard")
     state.generator.eval()
+    state.pretrained_dac.eval()
 
     samples = [state.val_data[idx] for idx in val_idx]
     batch = state.val_data.collate(samples)
@@ -329,10 +370,20 @@ def save_samples(state, val_idx, writer):
     signal = state.train_data.transform(
         batch["signal"].clone(), **batch["transform_args"]
     )
-    ref_signal, input_signal = dac.get_reference_audio(signal.audio_data, state.reference_length, signal.sample_rate, "prefix")
-    signal = AudioSignal(input_signal, signal.sample_rate).resample(state.model_sample_rate)
-    out = state.generator(signal.clone().audio_data, ref_signal)
-    recons = AudioSignal(out["audio"], signal.sample_rate)
+    audio_data = state.pretrained_dac.module.preprocess(signal.clone().audio_data, None)
+    _, codes, _, _, _ = state.pretrained_dac.module.encode(audio_data, n_quantizers=1)
+
+    ref_codes, input_codes, ref_side = dac.get_reference_audio(codes, state.reference_length, state.codes_sample_rate)
+    _, signal_audio, _ =  dac.get_reference_audio(signal.audio_data, state.reference_length, state.codes_sample_rate, ref_side=ref_side)
+    signal = AudioSignal(signal_audio, signal.sample_rate)    
+    out = state.generator(input_codes, ref_codes)
+
+    z = state.pretrained_dac.module.quantizer.from_codes(sample_from_logits(out["logits"]).transpose(1, 2))[0]
+    recons = state.pretrained_dac.module.decode(z)
+    recons = AudioSignal(recons, signal.sample_rate)
+    true_z = state.pretrained_dac.module.quantizer.from_codes(input_codes)[0]
+    signal_audio = state.pretrained_dac.module.decode(true_z)
+    signal = AudioSignal(signal_audio, signal.sample_rate)
 
     audio_dict = {"recons": recons}
     if state.tracker.step == 0:

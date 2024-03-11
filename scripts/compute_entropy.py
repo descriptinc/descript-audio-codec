@@ -15,11 +15,7 @@ def main(
     device: str = "cuda",
 ):
     files = at.util.find_audio(folder)[:n_samples]
-    signals = [
-        (at.AudioSignal.salient_excerpt(f, loudness_cutoff=-20, duration=6.0))
-        for f in files
-    ]
-    print(len(signals))
+
 
     with torch.no_grad():
         model = dac.model.DAC.load(model_path)
@@ -27,13 +23,15 @@ def main(
         model.to(device).eval()
 
         codes = []
-        for x in tqdm.tqdm(signals):
+        for file_path in tqdm.tqdm(files):
+            x = at.AudioSignal.salient_excerpt(file_path, loudness_cutoff=-20, duration=6.0)
             x = x.to(model.device)
             if x.signal_duration >= 6.0:
                 ref_signal, input_signal = dac.get_reference_audio(x.audio_data, 5.0, x.sample_rate)
                 signal = at.AudioSignal(input_signal, x.sample_rate).resample(model.sample_rate)
                 o = model.encode(signal.audio_data, ref_signal)
                 codes.append(o[1].cpu())
+
 
         codes = torch.cat(codes, dim=-1)
         print(codes.shape)
