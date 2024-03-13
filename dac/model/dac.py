@@ -13,6 +13,7 @@ from dac.nn.layers import Snake1d
 from dac.nn.layers import WNConv1d
 from dac.nn.layers import WNConvTranspose1d
 from dac.nn.quantize import ResidualVectorQuantize
+from dac.model.autoreg_mlp import AutoregMLP
 
 
 def init_weights(m):
@@ -155,12 +156,14 @@ class StyleEncoder(nn.Module):
         n_heads: int = 8,
         n_layers: int = 2,
         d_out: int = 128,
+        mean_output: bool = True
     ):
         super().__init__()
         self.encoder_dim = encoder_dim
         self.d_model = d_model
         self.n_layers = n_layers
         self.d_out = d_out
+        self.mean_output = mean_output
 
         self.projection = nn.Linear(encoder_dim, d_model)
         encoder_layer = nn.TransformerEncoderLayer(d_model, n_heads, dim_feedforward=d_model*4)
@@ -177,18 +180,19 @@ class StyleEncoder(nn.Module):
 
         Returns
         -------
-        Tensor[B x D_out]
-            Style encoding of input codess
+        Tensor[B x D_out] or Tensor[B, T, D_out]
+            Style encoding of input codes if not self.mean_output, or sequence if self.mean_output
         """
         z = codes.transpose(1, 2)  # [B x D x T] -> [B x T x D]
         z = self.projection(z)
         hidden = self.transformer(z)
 
         # Compute avg pooling across timesteps
-        hidden_avg = hidden.mean(1)
+        if self.mean_output:
+         hidden = hidden.mean(1)
 
         # Compute flat style vector
-        style = self.linear(hidden_avg)
+        style = self.linear(hidden)
 
         return style
 
@@ -385,6 +389,7 @@ class DACNestedCodec(BaseModel):
         ref_d_model: int = 64,
         ref_n_layers: int = 2,
         ref_out_dim: int = 128,
+        ref_cross_attention: bool = True,
         n_codebooks: int = 9,
         codebook_size: int = 1024,
         codebook_dim: Union[int, list] = 8,
@@ -400,6 +405,10 @@ class DACNestedCodec(BaseModel):
         self.decoder_dim = decoder_dim
         self.decoder_rates = decoder_rates
         self.sample_rate = sample_rate
+        self.ref_d_model = ref_d_model
+        self.ref_n_layers = ref_n_layers
+        self.ref_out_dim = ref_out_dim
+        self.ref_cross_attention = ref_cross_attention
 
         if latent_dim is None:
             latent_dim = encoder_dim * (2 ** len(encoder_rates))
@@ -410,7 +419,7 @@ class DACNestedCodec(BaseModel):
 
         self.token_emb = nn.Embedding(self.vocab_size * self.n_token_levels, token_emb_dim)
         self.register_buffer(
-            "token_offsets", torch.arange(self.n_token_levels)[None, :, None] * vocab_size
+            "token_offsets", torch.arange(self.n_token_levels)[None, None, :] * vocab_size
         )
 
         self.encoder = Encoder(encoder_dim, encoder_rates, latent_dim, token_emb_dim)
@@ -418,9 +427,15 @@ class DACNestedCodec(BaseModel):
             encoder_dim=token_emb_dim,
             d_model=ref_d_model,
             n_layers=ref_n_layers,
-            d_out=ref_out_dim
+            d_out=ref_out_dim,
+            mean_output=not ref_cross_attention
         )
-        self.combined_latent_dim = latent_dim + ref_out_dim
+        if self.ref_cross_attention:
+            self.cross_attn = nn.MultiheadAttention(
+                latent_dim, num_heads=8, dropout=0.1, kdim=ref_out_dim, vdim=ref_out_dim, batch_first=True)
+            self.combined_latent_dim = latent_dim
+        else:
+            self.combined_latent_dim = latent_dim + ref_out_dim
 
         self.n_codebooks = n_codebooks
         self.codebook_size = codebook_size
@@ -458,9 +473,9 @@ class DACNestedCodec(BaseModel):
 
         Parameters
         ----------
-        codes : Tensor[B x D x T]
+        codes : Tensor[B x T x D]
             input codes
-        ref_codes : Tensor[B x D x T]
+        ref_codes : Tensor[B x T x D]
             codes for reference vector
         n_quantizers : int, optional
             Number of quantizers to use, by default None
@@ -485,7 +500,7 @@ class DACNestedCodec(BaseModel):
             "vq/codebook_loss" : Tensor[1]
                 Codebook loss to update the codebook
         """
-        codes_emb = self.token_emb(codes + self.token_offsets).sum(-3).transpose(1, 2)
+        codes_emb = self.token_emb(codes + self.token_offsets).sum(-2).transpose(1, 2)
         codes_emb = self.preprocess(codes_emb)
         z = self.encoder(codes_emb)
 
@@ -493,12 +508,15 @@ class DACNestedCodec(BaseModel):
             z, n_quantizers
         )
         if self.ref_encoder is not None:
-            ref_codes_emb = self.token_emb(ref_codes + self.token_offsets).sum(-3).transpose(1, 2)
-            ref_vector = self.ref_encoder(ref_codes_emb)
-            z = torch.cat([z, ref_vector.unsqueeze(-1).expand(-1, -1, z.shape[-1])], dim=1)
+            ref_codes_emb = self.token_emb(ref_codes + self.token_offsets).sum(-2).transpose(1, 2)
+            ref_encoding = self.ref_encoder(ref_codes_emb)
+            if self.ref_cross_attention:
+                z = self.cross_attn(z.transpose(1, 2), ref_encoding, ref_encoding)[0].transpose(1, 2)
+            else:
+                z = torch.cat([z, ref_encoding.unsqueeze(-1).expand(-1, -1, z.shape[-1])], dim=1)
         else:
-            ref_vector = None
-        return z, codes, latents, ref_vector, commitment_loss, codebook_loss
+            ref_encoding = None
+        return z, codes, latents, ref_encoding, commitment_loss, codebook_loss
 
     def decode(self, z: torch.Tensor):
         """Decode given latent codes and return audio data
@@ -555,7 +573,7 @@ class DACNestedCodec(BaseModel):
                 Number of samples in input audio
             "reference_vector" : Tensor[B x D]
         """
-        length = codes.size(-1)
+        length = codes.size(1)
         z, nested_codes, latents, reference_vector, commitment_loss, codebook_loss = self.encode(
             codes, ref_codes, n_quantizers
         )
@@ -563,7 +581,7 @@ class DACNestedCodec(BaseModel):
         x = x.transpose(1, 2)   # [B x N x T] -> [B x T x N]
         logits = self.out_classifier(x)
         return {
-            "logits": logits.reshape(codes.size(0), codes.size(2), self.n_token_levels, -1),
+            "logits": logits.reshape(codes.size(0), codes.size(1), self.n_token_levels, -1),
             "z": z,
             "codes": nested_codes,
             "latents": latents,

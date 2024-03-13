@@ -35,6 +35,20 @@ def get_reference_audio(
     return audio[..., -reference_index:], audio[..., :-reference_index], ref_side
 
 
+def get_reference_codes(
+    codes: Tensor,
+    reference_length: float = 2.5,
+    sample_rate: float = 50,
+    ref_side: str = None
+):
+    if ref_side is None:
+        ref_side = np.random.choice(["prefix", "suffix"])
+    reference_index = int(reference_length * sample_rate)
+    if ref_side == "prefix":
+        return codes[:, :reference_index, :], codes[:, reference_index:, :], ref_side
+    return codes[:, -reference_index:, :], codes[:, :-reference_index, :], ref_side
+
+
 def sample_from_logits(logits, sample=True, temperature=1.0, top_k=None, top_p=None, return_probs: bool = False):
     """Convenience function to sample from a categorial distribution with input as
     unnormalized logits.
