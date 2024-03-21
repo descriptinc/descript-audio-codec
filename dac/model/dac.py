@@ -156,6 +156,7 @@ class StyleEncoder(nn.Module):
         n_heads: int = 8,
         n_layers: int = 2,
         d_out: int = 128,
+        dropout: float = 0.1,
         mean_output: bool = True
     ):
         super().__init__()
@@ -166,7 +167,7 @@ class StyleEncoder(nn.Module):
         self.mean_output = mean_output
 
         self.projection = nn.Linear(encoder_dim, d_model)
-        encoder_layer = nn.TransformerEncoderLayer(d_model, n_heads, dim_feedforward=d_model*4)
+        encoder_layer = nn.TransformerEncoderLayer(d_model, n_heads, dim_feedforward=d_model*4, dropout=dropout)
         self.transformer = nn.TransformerEncoder(encoder_layer, n_layers)
         self.linear = nn.Linear(d_model, d_out)
 
@@ -390,6 +391,7 @@ class DACNestedCodec(BaseModel):
         ref_n_layers: int = 2,
         ref_out_dim: int = 128,
         ref_cross_attention: bool = True,
+        ref_dropout: float = 0.1,
         n_codebooks: int = 9,
         codebook_size: int = 1024,
         codebook_dim: Union[int, list] = 8,
@@ -409,6 +411,7 @@ class DACNestedCodec(BaseModel):
         self.ref_n_layers = ref_n_layers
         self.ref_out_dim = ref_out_dim
         self.ref_cross_attention = ref_cross_attention
+        self.ref_dropout = ref_dropout
 
         if latent_dim is None:
             latent_dim = encoder_dim * (2 ** len(encoder_rates))
@@ -428,11 +431,12 @@ class DACNestedCodec(BaseModel):
             d_model=ref_d_model,
             n_layers=ref_n_layers,
             d_out=ref_out_dim,
+            dropout=ref_dropout,
             mean_output=not ref_cross_attention
         )
         if self.ref_cross_attention:
             self.cross_attn = nn.MultiheadAttention(
-                latent_dim, num_heads=8, dropout=0.1, kdim=ref_out_dim, vdim=ref_out_dim, batch_first=True)
+                latent_dim, num_heads=8, dropout=ref_dropout, kdim=ref_out_dim, vdim=ref_out_dim, batch_first=True)
             self.combined_latent_dim = latent_dim
         else:
             self.combined_latent_dim = latent_dim + ref_out_dim
