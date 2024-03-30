@@ -215,6 +215,9 @@ class CodecMixin:
 
         codes = torch.cat(codes, dim=-1)
 
+        if n_quantizers is not None:
+            codes = codes[:, :n_quantizers, :]
+        
         dac_file = DACFile(
             codes=codes,
             chunk_length=chunk_length,
@@ -225,9 +228,6 @@ class CodecMixin:
             padding=self.padding,
             dac_version=SUPPORTED_VERSIONS[-1],
         )
-
-        if n_quantizers is not None:
-            codes = codes[:, :n_quantizers, :]
 
         self.padding = original_padding
         return dac_file
