@@ -167,7 +167,7 @@ class CodecMixin:
         loudness_fn = audio_signal.loudness
 
         # If audio is > 10 minutes long, use the ffmpeg versions
-        if audio_signal.signal_duration >= 10 * 60 * 60:
+        if audio_signal.signal_duration >= 10 * 60:
             resample_fn = audio_signal.ffmpeg_resample
             loudness_fn = audio_signal.ffmpeg_loudness
 
@@ -278,7 +278,7 @@ class CodecMixin:
         loudness_fn = recons.loudness
 
         # If audio is > 10 minutes long, use the ffmpeg versions
-        if recons.signal_duration >= 10 * 60 * 60:
+        if recons.signal_duration >= 10 * 60:
             resample_fn = recons.ffmpeg_resample
             loudness_fn = recons.ffmpeg_loudness
 
