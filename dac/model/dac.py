@@ -102,6 +102,7 @@ class DecoderBlock(nn.Module):
                 kernel_size=2 * stride,
                 stride=stride,
                 padding=math.ceil(stride / 2),
+                output_padding=0 if stride % 2 == 0 else 1
             ),
             ResidualUnit(output_dim, dilation=1),
             ResidualUnit(output_dim, dilation=3),
@@ -195,10 +196,9 @@ class DAC(BaseModel, CodecMixin):
 
         self.delay = self.get_delay()
 
-    def preprocess(self, audio_data, sample_rate):
-        if sample_rate is None:
-            sample_rate = self.sample_rate
-        assert sample_rate == self.sample_rate
+    def preprocess(self, audio_data, sample_rate=None):
+        if sample_rate:
+            assert sample_rate == self.sample_rate, f'Expected sample rate is {self.sample_rate}'
 
         length = audio_data.shape[-1]
         right_pad = math.ceil(length / self.hop_length) * self.hop_length - length

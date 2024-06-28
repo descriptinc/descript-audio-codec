@@ -6,7 +6,7 @@ with open("README.md") as f:
 
 setup(
     name="descript-audio-codec",
-    version="1.0.0",
+    version="1.0.1",
     classifiers=[
         "Intended Audience :: Developers",
         "Natural Language :: English",
