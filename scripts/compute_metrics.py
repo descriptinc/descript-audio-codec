@@ -22,7 +22,7 @@ from audiotools.data import transforms
 
 from dac.model import DAC
 from dac.utils.transforms import PowerNorm
-from metrics import SIM, PESQ, WER
+from dac.metrics import SIM, PESQ, WER
 from tqdm.auto import tqdm
 
 

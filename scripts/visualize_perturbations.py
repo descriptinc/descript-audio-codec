@@ -8,7 +8,7 @@ from dac.model import DAC
 from dac.utils.transforms import PowerNorm
 from tqdm import tqdm
 
-from metrics.eval_utils import (
+from dac.metrics.eval_utils import (
     compute_condition_number,
     compute_smoothness_curve,
     compute_locality_curve,

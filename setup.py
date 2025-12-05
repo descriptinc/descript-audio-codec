@@ -24,7 +24,7 @@ setup(
     author_email="prem@descript.com",
     url="https://github.com/descriptinc/descript-audio-codec",
     license="MIT",
-    packages=find_packages(exclude=("metrics", "metrics.*")),
+    packages=find_packages(),
     keywords=["audio", "compression", "machine learning"],
     install_requires=[
         "argbind>=0.3.7",

@@ -6,7 +6,7 @@ from audiotools import AudioSignal
 from audiotools.data import transforms
 from dac.model import DAC
 from dac.utils.transforms import PowerNorm
-from metrics.eval_utils import visualize_latents_with_pca
+from dac.metrics.eval_utils import visualize_latents_with_pca
 
 @argbind.bind(without_prefix=True)
 def visualize(

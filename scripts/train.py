@@ -30,8 +30,8 @@ from audiotools.ml.decorators import when
 import wandb
 
 import dac
-from metrics import SIM, PESQ, WER
-from metrics.eval_utils import (
+from dac.metrics import SIM, PESQ, WER
+from dac.metrics.eval_utils import (
     compute_condition_number,
     save_evaluation_plots_to_wandb,
 )
