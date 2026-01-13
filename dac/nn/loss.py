@@ -392,8 +392,7 @@ class L2LatentsLoss(nn.Module):
         Tensor[1]
             L2 penalty loss on latents
         """
-        # Compute mean squared value across batch and time dimensions
-        return torch.mean(torch.pow(latents, 2))
+        return torch.mean(latents.pow(2))
 
 
 class PowerInvariantContrastiveLoss(nn.Module):
@@ -600,11 +599,5 @@ class WavLMLoss(nn.Module):
             # No VAD weighting - compute standard losses
             cosine_loss = 1 - F.cosine_similarity(pred_embeddings_f32, target_embeddings, dim=1).mean()
             mse_loss = F.mse_loss(pred_embeddings_f32, target_embeddings)
-        
-        # Clean up
-        del target_embeddings
-        if vad_mask is not None:
-            del vad_mask
-        torch.cuda.empty_cache()
         
         return cosine_loss, mse_loss

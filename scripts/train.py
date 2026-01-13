@@ -30,7 +30,7 @@ from audiotools.ml.decorators import when
 import wandb
 
 import dac
-from dac.metrics import SIM, PESQ, WER
+from dac.metrics import SIM, PESQ, WER, EnergyRatio
 from dac.metrics.eval_utils import (
     compute_condition_number,
     save_evaluation_plots_to_wandb,
@@ -82,7 +82,12 @@ class WandbTracker(Tracker):
 # Enable cudnn autotuner to speed up training
 # (can be altered by the funcs.seed function)
 torch.backends.cudnn.benchmark = bool(int(os.getenv("CUDNN_BENCHMARK", 1)))
-# Uncomment to trade memory for speed.
+
+# Enable cuDNN flash attention if available (PyTorch 2.0+)
+if hasattr(torch.backends.cuda, 'enable_flash_sdp'):
+    torch.backends.cuda.enable_flash_sdp(True)
+if hasattr(torch.backends.cuda, 'enable_mem_efficient_sdp'):
+    torch.backends.cuda.enable_mem_efficient_sdp(True)
 
 # Optimizers
 AdamW = argbind.bind(torch.optim.AdamW, "generator", "discriminator")
@@ -125,6 +130,72 @@ losses = argbind.bind_module(dac.nn.loss, filter_fn=filter_fn)
 def get_infinite_loader(dataloader):
     while True:
         for batch in dataloader:
+            yield batch
+
+
+class CUDAPrefetcher:
+    """Prefetches batches to GPU using a separate CUDA stream for async transfer.
+    
+    This overlaps data loading/transfer with computation for better GPU utilization.
+    """
+    def __init__(self, loader, device):
+        self.loader = loader
+        self.device = device
+        self.stream = torch.cuda.Stream() if torch.cuda.is_available() else None
+        self.next_batch = None
+        self.loader_iter = None
+        
+    def _preload(self):
+        """Preload next batch to GPU asynchronously."""
+        try:
+            self.next_batch = next(self.loader_iter)
+        except StopIteration:
+            self.next_batch = None
+            return
+            
+        if self.stream is not None:
+            with torch.cuda.stream(self.stream):
+                self.next_batch = self._to_device(self.next_batch)
+    
+    def _to_device(self, batch):
+        """Recursively move batch to device."""
+        if isinstance(batch, torch.Tensor):
+            return batch.to(self.device, non_blocking=True)
+        elif isinstance(batch, dict):
+            return {k: self._to_device(v) for k, v in batch.items()}
+        elif isinstance(batch, (list, tuple)):
+            return type(batch)(self._to_device(x) for x in batch)
+        else:
+            return batch
+    
+    def __iter__(self):
+        self.loader_iter = iter(self.loader)
+        self._preload()
+        return self
+    
+    def __next__(self):
+        if self.stream is not None:
+            torch.cuda.current_stream().wait_stream(self.stream)
+            
+        batch = self.next_batch
+        if batch is None:
+            raise StopIteration
+            
+        # Ensure tensors are ready before returning
+        if isinstance(batch, dict):
+            for v in batch.values():
+                if isinstance(v, torch.Tensor) and v.is_cuda:
+                    v.record_stream(torch.cuda.current_stream())
+        
+        self._preload()
+        return batch
+
+
+def get_prefetched_infinite_loader(dataloader, device):
+    """Create an infinite loader with CUDA prefetching."""
+    prefetcher = CUDAPrefetcher(get_infinite_loader(dataloader), device)
+    while True:
+        for batch in prefetcher:
             yield batch
 
 
@@ -282,6 +353,7 @@ class State:
     sim_metric: SIM = None
     pesq_metric: PESQ = None
     wer_metric: WER = None
+    energy_ratio_metric: EnergyRatio = None
 
     # Mixed precision bfloat16
     bfloat: bool = False
@@ -299,6 +371,7 @@ def load(
     resume: bool = False,
     tag: str = "latest",
     load_weights: bool = False,
+    compile_mode: str = "default",  # "default", "reduce-overhead", "max-autotune", or "" to disable
 ):
     generator, g_extra = None, {}
     discriminator, d_extra = None, {}
@@ -323,12 +396,28 @@ def load(
 
     generator = accel.prepare_model(generator)
     discriminator = accel.prepare_model(discriminator)
+    
+    # Apply torch.compile for speed optimization (PyTorch 2.0+)
+    # Note: Only compile the generator. The discriminator uses audiotools/scipy for STFT
+    # which torch.compile cannot trace through (causes dynamo errors with scipy).
+    if compile_mode and hasattr(torch, 'compile'):
+        tracker.print(f"Compiling generator with mode='{compile_mode}'...")
+        try:
+            generator = torch.compile(generator, mode=compile_mode, fullgraph=False)
+            tracker.print("Generator compiled successfully!")
+        except Exception as e:
+            tracker.print(f"Warning: torch.compile failed, continuing without compilation: {e}")
 
+    # Use fused AdamW optimizer for significant speedup on CUDA (PyTorch 2.0+)
+    # Fused optimizers combine parameter updates into fewer kernels
+    use_fused = torch.cuda.is_available() and hasattr(torch.optim.AdamW, 'fused')
+    fused_kwargs = {"fused": True} if use_fused and not accel.use_ddp else {}
+    
     with argbind.scope(args, "generator"):
-        optimizer_g = AdamW(generator.parameters(), use_zero=accel.use_ddp)
+        optimizer_g = AdamW(generator.parameters(), use_zero=accel.use_ddp, **fused_kwargs)
         scheduler_g = ExponentialLR(optimizer_g)
     with argbind.scope(args, "discriminator"):
-        optimizer_d = AdamW(discriminator.parameters(), use_zero=accel.use_ddp)
+        optimizer_d = AdamW(discriminator.parameters(), use_zero=accel.use_ddp, **fused_kwargs)
         scheduler_d = ExponentialLR(optimizer_d)
 
     if "optimizer.pth" in g_extra:
@@ -368,8 +457,9 @@ def load(
         sim_metric = None #SIM(device=accel.device)
         pesq_metric = PESQ()
         wer_metric = WER(device=accel.device)
+        energy_ratio_metric = EnergyRatio()
     else:
-        sim_metric = pesq_metric = wer_metric = None
+        sim_metric = pesq_metric = wer_metric = energy_ratio_metric = None
     # Load EMA state if resuming
     if resume and ema is not None and "ema.pth" in g_extra:
         try:
@@ -403,6 +493,7 @@ def load(
         sim_metric=sim_metric,
         pesq_metric=pesq_metric,
         wer_metric=wer_metric,
+        energy_ratio_metric=energy_ratio_metric,
         ema=ema,
         latents_warmup_steps=latents_warmup_steps,
         bfloat=bfloat_flag,
@@ -411,7 +502,7 @@ def load(
 
 
 @timer()
-@torch.no_grad()
+@torch.inference_mode()  # Faster than torch.no_grad() - disables autograd entirely
 def val_loop(batch, state, accel):
     state.generator.eval()
     batch = util.prepare_batch(batch, accel.device)
@@ -467,6 +558,14 @@ def train_loop(state, batch, accel, lambdas):
 
     # When to step (end of accumulation window)
     is_update_step = ((state.tracker.step + 1) % state.gradient_accumulation_steps == 0)
+    
+    # DDP sync optimization: skip gradient sync for intermediate accumulation steps
+    # This saves significant communication overhead in multi-GPU training
+    def maybe_no_sync(model):
+        """Context manager that disables DDP gradient sync for intermediate steps."""
+        if hasattr(model, 'no_sync') and not is_update_step and state.gradient_accumulation_steps > 1:
+            return model.no_sync()
+        return nullcontext()
 
     device_type = accel.device.type if hasattr(accel.device, "type") else ("cuda" if torch.cuda.is_available() else "cpu")
     autocast_ctx = torch.autocast(device_type=device_type, dtype=torch.bfloat16) if state.bfloat else nullcontext()
@@ -488,7 +587,9 @@ def train_loop(state, batch, accel, lambdas):
     with autocast_ctx:
         output["adv/disc_loss"] = state.gan_loss.discriminator_loss(recons_for_d, signal)
 
-    accel.backward(output["adv/disc_loss"] / state.gradient_accumulation_steps)
+    # Use no_sync for intermediate gradient accumulation steps
+    with maybe_no_sync(state.discriminator):
+        accel.backward(output["adv/disc_loss"] / state.gradient_accumulation_steps)
 
     # ----------------
     # G: freeze D, accumulate generator grads ONLY
@@ -525,7 +626,9 @@ def train_loop(state, batch, accel, lambdas):
 
     output["loss"] = sum([v * output[k] for k, v in curr_lambdas.items() if k in output])
 
-    accel.backward(output["loss"] / state.gradient_accumulation_steps)
+    # Use no_sync for intermediate gradient accumulation steps
+    with maybe_no_sync(state.generator):
+        accel.backward(output["loss"] / state.gradient_accumulation_steps)
 
     # Unfreeze D for the next iteration
     for p in state.discriminator.parameters():
@@ -604,7 +707,7 @@ def checkpoint(state, save_iters, save_path):
         )
 
 
-@torch.no_grad()
+@torch.inference_mode()  # Faster than torch.no_grad() - disables autograd entirely
 def save_samples(state, val_idx):
     state.tracker.print("Saving audio samples to wandb")
     state.generator.eval()
@@ -634,11 +737,12 @@ def save_samples(state, val_idx):
     effective_step = state.tracker.step // state.gradient_accumulation_steps
 
     # Calculate metrics between original and reconstructed audio
-    if state.pesq_metric is not None or state.wer_metric is not None:
+    if state.pesq_metric is not None or state.wer_metric is not None or state.energy_ratio_metric is not None:
         # Lists to store metrics for all samples
         sim_scores = []
         pesq_scores = []
         wer_scores = []
+        energy_ratio_scores = []
         
         for i in range(signal.batch_size):
             # Get individual signals
@@ -666,6 +770,10 @@ def save_samples(state, val_idx):
                 # Clean up temporary files
                 os.remove(orig_path)
                 os.remove(enc_path)
+            
+            # Calculate Energy Ratio
+            if state.energy_ratio_metric is not None:
+                energy_ratio_scores.append(state.energy_ratio_metric(original_audio, encoded_audio))
         
         # Log average metrics to wandb
         metrics_to_log = {}
@@ -678,6 +786,9 @@ def save_samples(state, val_idx):
         
         if wer_scores:
             metrics_to_log["metrics/wer"] = sum(wer_scores) / len(wer_scores)
+        
+        if energy_ratio_scores:
+            metrics_to_log["metrics/energy_ratio"] = sum(energy_ratio_scores) / len(energy_ratio_scores)
         
         if metrics_to_log:
             wandb.log(metrics_to_log, step=effective_step)
@@ -769,21 +880,36 @@ def train(
     # Set gradient accumulation steps in tracker for proper wandb logging
     tracker.gradient_accumulation_steps = state.gradient_accumulation_steps
     
+    # DataLoader optimizations:
+    # - pin_memory=True: speeds up CPU->GPU transfers by using pinned (page-locked) memory
+    # - persistent_workers=True: keeps workers alive between epochs to avoid respawn overhead
+    # - prefetch_factor=4: preload 4 batches per worker to overlap I/O with compute
+    dataloader_kwargs = {
+        "pin_memory": True,
+        "persistent_workers": num_workers > 0,
+        "prefetch_factor": 4 if num_workers > 0 else None,
+    }
+    
     train_dataloader = accel.prepare_dataloader(
         state.train_data,
         start_idx=state.tracker.step * batch_size,
         num_workers=num_workers,
         batch_size=batch_size,
         collate_fn=state.train_data.collate,
+        **dataloader_kwargs,
     )
-    train_dataloader = get_infinite_loader(train_dataloader)
+    # Use CUDA prefetching for async data transfer (overlaps I/O with compute)
+    if torch.cuda.is_available():
+        train_dataloader = get_prefetched_infinite_loader(train_dataloader, accel.device)
+    else:
+        train_dataloader = get_infinite_loader(train_dataloader)
     val_dataloader = accel.prepare_dataloader(
         state.val_data,
         start_idx=0,
         num_workers=num_workers,
         batch_size=val_batch_size,
         collate_fn=state.val_data.collate,
-        persistent_workers=num_workers > 0,
+        **dataloader_kwargs,
     )
 
     # Wrap the functions so that they neatly track in wandb + progress bars

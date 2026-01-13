@@ -35,6 +35,15 @@ AdamW.lr: 0.0001
 ExponentialLR.gamma: 0.999996
 gradient_accumulation_steps: 1  # Set to 1 to disable (default), increase to accumulate
 
+# torch.compile mode for generator optimization (PyTorch 2.0+)
+# Options: "default", "reduce-overhead", "max-autotune", or "" to disable
+# - "default": good balance of compile time and runtime speed
+# - "reduce-overhead": optimizes for small batches, reduces kernel launch overhead
+# - "max-autotune": spends more time autotuning for maximum runtime speed
+# Note: Only the generator is compiled. Discriminator uses scipy (via audiotools STFT)
+# which torch.compile cannot trace through.
+compile_mode: "default"
+
 bfloat: false
 val_batch_size: 128
 device: cuda

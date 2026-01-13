@@ -4,5 +4,6 @@
 from .sim import SIM
 from .pesq import PESQ
 from .wer import WER
+from .energy_ratio import EnergyRatio
 
-__all__ = ['SIM', 'PESQ', 'WER']
+__all__ = ['SIM', 'PESQ', 'WER', 'EnergyRatio']

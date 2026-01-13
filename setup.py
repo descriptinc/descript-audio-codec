@@ -30,7 +30,9 @@ setup(
         "argbind>=0.3.7",
         "descript-audiotools>=0.7.2",
         "einops",
-        "numpy",
+        "librosa>=0.11.0",  # numpy 2.x compatibility
+        "numba>=0.63.0",  # numpy 2.x compatibility
+        "numpy>=2.0",
         "soundfile==0.13.1",
         "torch",
         "torchaudio",
@@ -43,8 +45,6 @@ setup(
             "pynvml",
             "psutil",
             "pandas",
-            "onnx",
-            "onnx-simplifier",
             "seaborn",
             "jupyterlab",
             "pandas",

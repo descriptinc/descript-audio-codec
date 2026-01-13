@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Evaluate a DAC model over a dataset of WAV files by computing PESQ, SIM, and WER
-between the original and encoded-decoded audio.
+Evaluate a DAC model over a dataset of WAV files by computing PESQ, SIM, WER,
+and Energy Ratio between the original and encoded-decoded audio.
 
 Usage: python scripts/compute_metrics.py --model_path <path> --dataset_path <path> [--device cuda|cpu]
 
@@ -22,7 +22,7 @@ from audiotools.data import transforms
 
 from dac.model import DAC
 from dac.utils.transforms import PowerNorm
-from dac.metrics import SIM, PESQ, WER
+from dac.metrics import SIM, PESQ, WER, EnergyRatio
 from tqdm.auto import tqdm
 
 
@@ -78,6 +78,7 @@ def evaluate_dataset(
     sim_metric = SIM(device=device)
     pesq_metric = PESQ()
     wer_metric = WER(device=device)
+    energy_ratio_metric = EnergyRatio()
 
     # Match training postprocess: PowerNorm (apply explicitly)
     _power_norm = PowerNorm(db=-16.0)
@@ -85,6 +86,7 @@ def evaluate_dataset(
     sim_scores: List[float] = []
     pesq_scores: List[float] = []
     wer_scores: List[float] = []
+    energy_ratio_scores: List[float] = []
 
     wav_files = sorted(Path(dataset_path).rglob("*.wav"))
     for wav_path in tqdm(wav_files):
@@ -117,14 +119,19 @@ def evaluate_dataset(
         # WER (lower is better) using in-memory arrays
         wer_scores.append(wer_metric(original_np, decoded_np, sample_rate=model.sample_rate))
 
+        # Energy Ratio (ideal is 1.0)
+        energy_ratio_scores.append(energy_ratio_metric(original_np, decoded_np))
+
     # Aggregate and print results
     sim_mean, sim_ci = _mean_ci(sim_scores)
     pesq_mean, pesq_ci = _mean_ci(pesq_scores)
     wer_mean, wer_ci = _mean_ci(wer_scores)
+    energy_ratio_mean, energy_ratio_ci = _mean_ci(energy_ratio_scores)
 
     print(f"SIM = {sim_mean:.2f} ± {sim_ci:.2f}")
     print(f"PESQ = {pesq_mean:.2f} ± {pesq_ci:.2f}")
     print(f"WER = {wer_mean:.2f} ± {wer_ci:.2f}")
+    print(f"Energy Ratio = {energy_ratio_mean:.4f} ± {energy_ratio_ci:.4f}")
 
 
 if __name__ == "__main__":
