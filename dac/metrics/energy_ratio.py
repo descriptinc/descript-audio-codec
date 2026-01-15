@@ -28,15 +28,11 @@ class EnergyRatio:
             sample_rate: Sample rate (unused, kept for API consistency with other metrics)
         
         Returns:
-            float: Energy ratio (reconstructed/original). Ideal value is 1.0.
+            float: Energy ratio (reconstructed/original) in dB. Ideal value is 0.0.
         """
         # Calculate energy as sum of squared samples
-        energy_original = np.sqrt(np.sum(audio_original ** 2))
-        energy_reconstructed = np.sqrt(np.sum(audio_reconstructed ** 2))
-        
-        # Avoid division by zero
-        if energy_original < 1e-10:
-            return 1.0 if energy_reconstructed < 1e-10 else float('inf')
-        
-        return energy_reconstructed / energy_original
+        energy_original = np.sum(audio_original ** 2) + 1e-10
+        energy_reconstructed = np.sum(audio_reconstructed ** 2) + 1e-10
+        db = 10 * np.log10(energy_reconstructed / energy_original)
+        return db
 
