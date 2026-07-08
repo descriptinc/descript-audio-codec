@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     build-essential \
+    ffmpeg \
     tmux \
     && rm -rf /var/lib/apt/lists/*
 
@@ -25,6 +26,8 @@ RUN pip install --no-cache-dir \
     "pesq" \
     "openai-whisper" \
     "jiwer" \
+    "speechbrain" \
+    "wandb" \
     "typing-extensions>=4.14.1"
 
 RUN python3 -m dac download
@@ -34,3 +37,6 @@ RUN python3 -m dac download
 #   docker run --gpus all --shm-size=64g ...
 # or:
 #   docker run --gpus all --ipc=host ...
+#
+# The training script initializes Weights & Biases. Provide credentials at
+# runtime with `wandb login` inside the container or by passing WANDB_API_KEY.
