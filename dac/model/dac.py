@@ -5,6 +5,8 @@ import numpy as np
 import torch
 from audiotools import AudioSignal
 from audiotools.ml import BaseModel
+from einops import rearrange
+from einops import repeat
 from torch import nn
 import torch.nn.functional as F
 
@@ -21,58 +23,27 @@ def init_weights(m):
         nn.init.constant_(m.bias, 0)
 
 
-def match_channels(x: torch.Tensor, target_channels: int) -> torch.Tensor:
-    """Match channel dimension using parameter-free operations (mean or repeat).
-    
-    Args:
-        x: Input tensor of shape (B, C, T)
-        target_channels: Target number of channels
-        
-    Returns:
-        Tensor with shape (B, target_channels, T)
-    """
-    B, C, T = x.shape
-    
+def match_residual_shape(x: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Match residual shape for the fixed_dcae.yml DAC configuration."""
+    _, C, _ = x.shape
+    target_channels = target.shape[1]
+
     if C == target_channels:
-        return x
-    elif C > target_channels:
-        # Use mean to reduce channels
-        group_size = C // target_channels
-        if C % target_channels == 0:
-            # Perfect division - reshape and mean
-            x = x.view(B, target_channels, group_size, T)
-            x = x.mean(dim=2)
-        else:
-            # Not perfect division - take first target_channels
-            x = x[:, :target_channels, :]
-    else:  # C < target_channels
-        # Repeat to expand channels
-        repeat_factor = target_channels // C
-        x = x.repeat(1, repeat_factor, 1)
-        # Handle any remaining channels
-        if x.shape[1] < target_channels:
-            extra = target_channels - x.shape[1]
-            x = torch.cat([x, x[:, :extra]], dim=1)
-    
-    return x
+        residual = x
 
+    elif target_channels % C == 0:
+        residual = repeat(x, "b c t -> b (r c) t", r=target_channels // C)
 
-def match_time_dimension(x: torch.Tensor, target_length: int) -> torch.Tensor:
-    """Match time dimension by truncating or padding.
-    
-    Args:
-        x: Input tensor of shape (B, C, T)
-        target_length: Target time dimension
-        
-    Returns:
-        Tensor with shape (B, C, target_length)
-    """
-    if x.shape[-1] > target_length:
-        return x[..., :target_length]
-    elif x.shape[-1] < target_length:
-        return F.pad(x, (0, target_length - x.shape[-1]))
+    elif C % target_channels == 0:
+        residual = rearrange(x, "b (c g) t -> b c g t", c=target_channels).mean(dim=2)
+
     else:
-        return x
+        raise ValueError(f"Unsupported residual channel match: {C} -> {target_channels}")
+
+    if residual.shape[-1] != target.shape[-1]:
+        raise ValueError(f"Residual time mismatch: {residual.shape[-1]} != {target.shape[-1]}")
+
+    return residual
 
 
 class ResidualUnit(nn.Module):
@@ -121,27 +92,8 @@ class EncoderBlock(nn.Module):
         out = self.block(x)
         
         if self.use_residual and self.stride > 1:
-            # DC-AE style residual: parameter-free transformation
-            B, C, T = x.shape
-            
-            # Time-to-Channel transformation via reshape
-            # Pad if necessary to make T divisible by stride
-            if T % self.stride != 0:
-                pad_amount = self.stride - (T % self.stride)
-                x_padded = F.pad(x, (0, pad_amount))
-                T_padded = T + pad_amount
-            else:
-                x_padded = x
-                T_padded = T
-                
-            # Reshape: (B, C, T) -> (B, C, T/stride, stride) -> (B, C*stride, T/stride)
-            residual = x_padded.view(B, C, T_padded // self.stride, self.stride)
-            residual = residual.permute(0, 1, 3, 2).reshape(B, C * self.stride, T_padded // self.stride)
-            
-            # Match channel and time dimensions
-            residual = match_channels(residual, self.output_dim)
-            residual = match_time_dimension(residual, out.shape[-1])
-                
+            residual = rearrange(x, "b c (t s) -> b (c s) t", s=self.stride)
+            residual = match_residual_shape(residual, out)
             out = out + residual
             
         return out
@@ -197,8 +149,7 @@ class Encoder(nn.Module):
         
         if self.use_residual:
             # Add residual connection for first conv
-            residual = match_channels(x, self.d_model)
-            residual = match_time_dimension(residual, out.shape[-1])
+            residual = match_residual_shape(x, out)
             out = out + residual
         
         # Process through main blocks
@@ -209,8 +160,7 @@ class Encoder(nn.Module):
         
         if self.use_residual:
             # Add residual connection for final conv
-            residual = match_channels(features, self.d_latent)
-            residual = match_time_dimension(residual, out.shape[-1])
+            residual = match_residual_shape(features, out)
             out = out + residual
         
         return out
@@ -243,18 +193,9 @@ class DecoderBlock(nn.Module):
         
         if self.use_residual and self.stride > 1:
             # DC-AE style residual: parameter-free transformation
-            B, _, T = x.shape
-            
-            # Match channels first
-            residual = match_channels(x, self.output_dim)
-            
             # Channel-to-Time transformation: simple repeat for upsampling
-            B, C_res, T = residual.shape
-            residual = residual.unsqueeze(-1).repeat(1, 1, 1, self.stride)
-            residual = residual.view(B, C_res, T * self.stride)
-            
-            # Match time dimension
-            residual = match_time_dimension(residual, out.shape[-1])
+            residual = repeat(x, "b c t -> b c (t s)", s=self.stride)
+            residual = match_residual_shape(residual, out)
                 
             out = out + residual
             
@@ -311,8 +252,7 @@ class Decoder(nn.Module):
         
         if self.use_residual:
             # Add residual connection for first conv
-            residual = match_channels(x, self.channels)
-            residual = match_time_dimension(residual, out.shape[-1])
+            residual = match_residual_shape(x, out)
             out = out + residual
         
         # Process through main layers
@@ -323,8 +263,7 @@ class Decoder(nn.Module):
         
         if self.use_residual:
             # Add residual connection for final conv
-            residual = match_channels(features, self.d_out)
-            residual = match_time_dimension(residual, out.shape[-1])
+            residual = match_residual_shape(features, out)
             out = out + residual
         
         # Apply tanh activation
@@ -382,8 +321,7 @@ class WavLMDecoder(nn.Module):
         
         if self.use_residual:
             # Add residual connection for first conv
-            residual = match_channels(x, self.channels)
-            residual = match_time_dimension(residual, out.shape[-1])
+            residual = match_residual_shape(x, out)
             out = out + residual
         
         # Process through main layers
@@ -394,8 +332,7 @@ class WavLMDecoder(nn.Module):
         
         if self.use_residual:
             # Add residual connection for final conv
-            residual = match_channels(features, self.d_out)
-            residual = match_time_dimension(residual, out.shape[-1])
+            residual = match_residual_shape(features, out)
             out = out + residual
         
         return out
@@ -583,7 +520,10 @@ class DAC(BaseModel, CodecMixin):
                 cutoff_channels = cutoff_values[torch.randint(0, cutoff_values.shape[0], (z.shape[0],), device=z.device)]
                 
                 # Create a mask that zeros out channels after the cutoff
-                channel_mask = (torch.arange(z.shape[1], device=z.device).unsqueeze(0) <= cutoff_channels.unsqueeze(1)).unsqueeze(-1).float()
+                channel_mask = (
+                    rearrange(torch.arange(z.shape[1], device=z.device), "c -> 1 c 1")
+                    <= rearrange(cutoff_channels, "b -> b 1 1")
+                ).float()
                 
                 # Apply the mask to zero out channels after the cutoff
                 z = z * channel_mask

@@ -1,0 +1,133 @@
+# Model setup
+DAC.sample_rate: 44100
+DAC.encoder_dim: 128
+DAC.encoder_strides: [4, 8, 8, 8]
+DAC.encoder_multipliers: [2, 2, 2, 2]
+DAC.latent_dim: 128
+DAC.decoder_dim: 2048
+DAC.decoder_strides: [8, 8, 8, 4]
+DAC.decoder_multipliers: [2, 2, 2, 2]
+DAC.wavlm_decoder_strides: [2]
+DAC.wavlm_decoder_multipliers: [2]
+DAC.latent_noise_max: 0.5  # Maximum standard deviation for noise injection during training
+DAC.causal: true
+DAC.dilate: true
+DAC.use_rmsnorm: true
+DAC.use_residual: true  # DC-AE inspired parameter-free residual connections
+DAC.structured_latent: false  # Progressive channel dropout for latents
+DAC.power_channel: true  # Use contrastive learning to encourage first channel to encode power
+
+# Discriminator
+Discriminator.sample_rate: 44100
+Discriminator.rates: []
+Discriminator.periods: [2, 3, 5, 7, 11]
+Discriminator.fft_sizes: [8192, 4096, 2048, 1024, 512]
+Discriminator.bands:
+  - [0.0, 0.1]
+  - [0.1, 0.25]
+  - [0.25, 0.5]
+  - [0.5, 0.75]
+  - [0.75, 1.0]
+
+# Optimization
+AdamW.betas: [0.8, 0.99]
+AdamW.lr: 0.0001
+ExponentialLR.gamma: 0.999996
+gradient_accumulation_steps: 1  # Set to 1 to disable (default), increase to accumulate
+
+# torch.compile mode for generator optimization (PyTorch 2.0+)
+# Options: "default", "reduce-overhead", "max-autotune", or "" to disable
+# - "default": good balance of compile time and runtime speed
+# - "reduce-overhead": optimizes for small batches, reduces kernel launch overhead
+# - "max-autotune": spends more time autotuning for maximum runtime speed
+# Note: Only the generator is compiled. Discriminator uses scipy (via audiotools STFT)
+# which torch.compile cannot trace through.
+compile_mode: "default"
+
+bfloat: false
+val_batch_size: 128
+device: cuda
+num_iters: 250000
+save_iters: [10000, 50000, 100000, 200000]
+valid_freq: 1000
+sample_freq: 10000
+num_workers: 32
+val_idx: [0, 1, 2, 3, 4, 5, 6, 7]
+seed: 0
+lambdas:
+  adv/gen_loss: 1.0
+  adv/feat_loss: 2.0
+  latents/loss: 2.0
+  mel/loss: 15.0
+  wavlm/mse_loss: 50.0
+  wavlm/cosine_loss: 50.0
+  power_contrastive/loss: 100.0  # Weight for power-invariant contrastive loss
+
+# EMA decay (set to 0 to disable EMA)
+ema_decay: 0.999
+
+# Linear warmup steps for latents/loss lambda
+latents_warmup_steps: 10000
+
+PowerNorm.db: [const, -16]
+
+# Transforms
+build_transform.preprocess:
+  - Identity
+build_transform.augment_prob: 0.0
+build_transform.augment:
+  - Identity
+build_transform.postprocess:
+  - PowerNorm
+  - ShiftPhase
+
+# Loss setup
+MultiScaleSTFTLoss.window_lengths: [8192, 4096, 2048, 1024, 512]
+MelSpectrogramLoss.n_mels: [5, 10, 20, 40, 80, 160, 320, 640, 1280]
+MelSpectrogramLoss.window_lengths: [32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+MelSpectrogramLoss.mel_fmin: [0, 0, 0, 0, 0, 0, 0, 0, 0]
+MelSpectrogramLoss.mel_fmax: [null, null, null, null, null, null, null, null, null]
+MelSpectrogramLoss.pow: 1.0
+MelSpectrogramLoss.clamp_eps: 1.0e-5
+MelSpectrogramLoss.mag_weight: 0.0
+WavLMLoss.vad_frame_samples: 0
+
+# Data
+batch_size: 128
+train/AudioDataset.duration: 1.5
+train/AudioDataset.n_examples: 10000000
+
+val/AudioDataset.duration: 5.0
+val/build_transform.augment_prob: 1.0
+val/AudioDataset.n_examples: 250
+
+test/AudioDataset.duration: 10.0
+test/build_transform.augment_prob: 1.0
+test/AudioDataset.n_examples: 1000
+
+AudioLoader.shuffle: true
+AudioDataset.without_replacement: true
+
+train/build_dataset.folders:
+  speech_fb:
+    - /data/dac/daps/train
+  speech_hq:
+    - /data/dac/vctk
+    - /data/dac/vocalset
+    - /data/dac/read_speech
+    - /data/dac/french_speech
+  speech_uq:
+    - /data/dac/emotional_speech/
+    - /data/dac/common_voice/
+    - /data/dac/german_speech/
+    - /data/dac/russian_speech/
+    - /data/dac/spanish_speech/
+
+val/build_dataset.folders:
+  speech_hq:
+    - /data/dac/daps/val
+
+test/build_dataset.folders:
+  speech_hq:
+    - /data/dac/daps/test
+
