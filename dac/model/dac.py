@@ -23,29 +23,6 @@ def init_weights(m):
         nn.init.constant_(m.bias, 0)
 
 
-def match_residual_shape(x: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """Match residual shape for the fixed_dcae.yml DAC configuration."""
-    _, C, _ = x.shape
-    target_channels = target.shape[1]
-
-    if C == target_channels:
-        residual = x
-
-    elif target_channels % C == 0:
-        residual = repeat(x, "b c t -> b (c r) t", r=target_channels // C)
-
-    elif C % target_channels == 0:
-        residual = rearrange(x, "b (c g) t -> b c g t", c=target_channels).mean(dim=2)
-
-    else:
-        raise ValueError(f"Unsupported residual channel match: {C} -> {target_channels}")
-
-    if residual.shape[-1] != target.shape[-1]:
-        raise ValueError(f"Residual time mismatch: {residual.shape[-1]} != {target.shape[-1]}")
-
-    return residual
-
-
 class ResidualUnit(nn.Module):
     def __init__(self, dim: int = 16, dilation: int = 1, causal: bool = False, use_rmsnorm: bool = True):
         super().__init__()
@@ -92,8 +69,8 @@ class EncoderBlock(nn.Module):
         out = self.block(x)
         
         if self.use_residual and self.stride > 1:
-            residual = rearrange(x, "b c (t s) -> b (c s) t", s=self.stride)
-            residual = match_residual_shape(residual, out)
+            channel_multiplier = self.output_dim // x.shape[1]
+            residual = rearrange(x, "b c (t m g) -> b (c m) g t", m=channel_multiplier, g=self.stride // channel_multiplier).mean(dim=2)
             out = out + residual
             
         return out
@@ -149,7 +126,7 @@ class Encoder(nn.Module):
         
         if self.use_residual:
             # Add residual connection for first conv
-            residual = match_residual_shape(x, out)
+            residual = repeat(x, "b c t -> b (c r) t", r=self.d_model // x.shape[1])
             out = out + residual
         
         # Process through main blocks
@@ -160,7 +137,7 @@ class Encoder(nn.Module):
         
         if self.use_residual:
             # Add residual connection for final conv
-            residual = match_residual_shape(features, out)
+            residual = rearrange(features, "b (c g) t -> b c g t", c=self.d_latent).mean(dim=2)
             out = out + residual
         
         return out
@@ -193,9 +170,8 @@ class DecoderBlock(nn.Module):
         
         if self.use_residual and self.stride > 1:
             # DC-AE style residual: parameter-free transformation
-            # Channel-to-Time transformation: simple repeat for upsampling
-            residual = repeat(x, "b c t -> b c (t s)", s=self.stride)
-            residual = match_residual_shape(residual, out)
+            residual = repeat(x, "b c t -> b (c r) t", r=self.stride * self.output_dim // x.shape[1])
+            residual = rearrange(residual, "b (c s) t -> b c (t s)", s=self.stride)
                 
             out = out + residual
             
@@ -252,7 +228,7 @@ class Decoder(nn.Module):
         
         if self.use_residual:
             # Add residual connection for first conv
-            residual = match_residual_shape(x, out)
+            residual = repeat(x, "b c t -> b (c r) t", r=self.channels // x.shape[1])
             out = out + residual
         
         # Process through main layers
@@ -263,7 +239,7 @@ class Decoder(nn.Module):
         
         if self.use_residual:
             # Add residual connection for final conv
-            residual = match_residual_shape(features, out)
+            residual = rearrange(features, "b (c g) t -> b c g t", c=self.d_out).mean(dim=2)
             out = out + residual
         
         # Apply tanh activation
@@ -321,7 +297,7 @@ class WavLMDecoder(nn.Module):
         
         if self.use_residual:
             # Add residual connection for first conv
-            residual = match_residual_shape(x, out)
+            residual = repeat(x, "b c t -> b (c r) t", r=self.channels // x.shape[1])
             out = out + residual
         
         # Process through main layers
@@ -332,7 +308,7 @@ class WavLMDecoder(nn.Module):
         
         if self.use_residual:
             # Add residual connection for final conv
-            residual = match_residual_shape(features, out)
+            residual = features
             out = out + residual
         
         return out
