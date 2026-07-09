@@ -87,10 +87,12 @@ class Encoder(nn.Module):
         dilate: bool = True,
         use_rmsnorm: bool = True,
         use_residual: bool = False,
+        power_channel: bool = False,
     ):
         super().__init__()
         kernel_size = 4 if causal else 7
         self.use_residual = use_residual
+        self.power_channel = power_channel
         self.d_latent = d_latent
         self.d_model = d_model
         self.strides = strides
@@ -117,8 +119,9 @@ class Encoder(nn.Module):
         self.block = nn.Sequential(*self.block)
         self.enc_dim = current_dim
         
-        # Create final convolution - always output d_latent channels
+        # Create final content projection. Power, when enabled, is a side-channel.
         self.final_conv = WNConv1d(current_dim, d_latent, kernel_size=kernel_size, causal=causal)
+        self.power_head = WNConv1d(current_dim, 1, kernel_size=kernel_size, causal=causal) if power_channel else None
 
     def forward(self, x):
         # Apply first convolution
@@ -132,15 +135,19 @@ class Encoder(nn.Module):
         # Process through main blocks
         features = self.block(out)
         
-        # Apply final conv
-        out = self.final_conv(features)
+        # Apply final content projection
+        content = self.final_conv(features)
         
         if self.use_residual:
             # Add residual connection for final conv
             residual = rearrange(features, "b (c g) t -> b c g t", c=self.d_latent).mean(dim=2)
-            out = out + residual
+            content = content + residual
+
+        if self.power_channel:
+            power = self.power_head(features)
+            return torch.cat([power, content], dim=1)
         
-        return out
+        return content
 
 
 class DecoderBlock(nn.Module):
@@ -190,15 +197,21 @@ class Decoder(nn.Module):
         dilate: bool = True,
         use_rmsnorm: bool = True,
         use_residual: bool = False,
+        power_channel: bool = False,
     ):
         super().__init__()
         kernel_size = 4 if causal else 7
         self.use_residual = use_residual
+        self.power_channel = power_channel
         self.d_out = d_out
         self.channels = channels
 
         # Create first conv layer separately
         self.first_conv = WNConv1d(input_channel, channels, kernel_size=kernel_size, causal=causal)
+        self.power_scale = nn.Conv1d(1, channels, kernel_size=1) if power_channel else None
+        if self.power_scale is not None:
+            nn.init.zeros_(self.power_scale.weight)
+            nn.init.zeros_(self.power_scale.bias)
 
         # Add upsampling + MRF blocks
         layers = []
@@ -223,8 +236,16 @@ class Decoder(nn.Module):
         self.tanh = nn.Tanh()
 
     def forward(self, x):
+        if self.power_channel:
+            power = x[:, :1, :]
+            x = x[:, 1:, :]
+        else:
+            power = None
+
         # Apply first convolution
         out = self.first_conv(x)
+        if power is not None:
+            out = out * (1 + self.power_scale(power))
         
         if self.use_residual:
             # Add residual connection for first conv
@@ -355,7 +376,17 @@ class DAC(BaseModel, CodecMixin):
         self.latent_dim = latent_dim
 
         self.hop_length = np.prod(encoder_strides)
-        self.encoder = Encoder(encoder_dim, encoder_strides, encoder_multipliers, latent_dim, causal=causal, dilate=dilate, use_rmsnorm=use_rmsnorm, use_residual=use_residual)
+        self.encoder = Encoder(
+            encoder_dim,
+            encoder_strides,
+            encoder_multipliers,
+            latent_dim,
+            causal=causal,
+            dilate=dilate,
+            use_rmsnorm=use_rmsnorm,
+            use_residual=use_residual,
+            power_channel=power_channel,
+        )
 
         self.decoder = Decoder(
             latent_dim,
@@ -366,6 +397,7 @@ class DAC(BaseModel, CodecMixin):
             dilate=dilate,
             use_rmsnorm=use_rmsnorm,
             use_residual=use_residual,
+            power_channel=power_channel,
         )
         self.wavlm_decoder = WavLMDecoder(
             latent_dim,
@@ -379,6 +411,9 @@ class DAC(BaseModel, CodecMixin):
         )
         self.sample_rate = sample_rate
         self.apply(init_weights)
+        if self.power_channel:
+            nn.init.zeros_(self.decoder.power_scale.weight)
+            nn.init.zeros_(self.decoder.power_scale.bias)
 
         self.delay = self.get_delay()
 
@@ -510,12 +545,13 @@ class DAC(BaseModel, CodecMixin):
             z_augmented = z_clean
             
         x = self.decode(z)
+        wavlm_z = z[:, 1:, :] if self.power_channel else z
         return {
             "audio": x[..., :length],
             "z": z,
             "z_clean": z_clean,
             "z_augmented": z_augmented,
-            "wavlm": self.wavlm_decoder(z),
+            "wavlm": self.wavlm_decoder(wavlm_z),
         }
 
 
