@@ -203,6 +203,11 @@ def get_prefetched_infinite_loader(dataloader, device):
             yield batch
 
 
+def ddp_barrier():
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
+
 @argbind.bind("train", "val")
 def build_transform(
     augment_prob: float = 1.0,
@@ -517,10 +522,12 @@ def val_loop(batch, state, accel):
     if state.ema is not None:
         with state.ema.average_parameters(accel.unwrap(state.generator)):
             out = state.generator(signal.audio_data, signal.sample_rate)
-            latents = accel.unwrap(state.generator).encode(signal.audio_data)
+            audio_data = accel.unwrap(state.generator).preprocess(signal.audio_data, signal.sample_rate)
+            latents = accel.unwrap(state.generator).encode(audio_data)
     else:
         out = state.generator(signal.audio_data, signal.sample_rate)
-        latents = accel.unwrap(state.generator).encode(signal.audio_data)
+        audio_data = accel.unwrap(state.generator).preprocess(signal.audio_data, signal.sample_rate)
+        latents = accel.unwrap(state.generator).encode(audio_data)
     
     if isinstance(latents, tuple):
         latents = latents[0]
@@ -943,10 +950,12 @@ def train(
 
             if tracker.step % (sample_freq * state.gradient_accumulation_steps) == 0 or last_iter:
                 save_samples(state, val_idx)
+                ddp_barrier()
 
             if tracker.step % (valid_freq * state.gradient_accumulation_steps) == 0 or last_iter:
                 validate(state, val_dataloader, accel)
                 checkpoint(state, save_iters, save_path)
+                ddp_barrier()
                 # Reset validation progress bar, print summary since last validation.
                 tracker.done("val", f"Iteration {state.tracker.step // state.gradient_accumulation_steps}")
 
