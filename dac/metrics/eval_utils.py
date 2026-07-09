@@ -32,6 +32,29 @@ def compute_mcd(mel_spec1, mel_spec2):
         dct(np.log(mel_spec2[..., :min_length] + 1e-8), axis=0, norm='ortho'))**2, axis=0)))
 
 
+def _block_aligned_mel_spectrogram(audio_data, sample_rate, n_mels=64, hop_length=2048):
+    """Compute mel frames aligned to non-overlapping hop_length sample blocks."""
+    audio_flat = audio_data.reshape(-1, audio_data.shape[-1])
+    window = torch.hann_window(hop_length, device=audio_data.device, dtype=audio_data.dtype)
+    stft = torch.stft(
+        audio_flat,
+        n_fft=hop_length,
+        hop_length=hop_length,
+        window=window,
+        center=False,
+        return_complex=True,
+    )
+    magnitude = torch.abs(stft)
+    mel_basis = AudioSignal.get_mel_filters(
+        sr=sample_rate,
+        n_fft=hop_length,
+        n_mels=n_mels,
+    )
+    mel_basis = torch.from_numpy(mel_basis).to(device=audio_data.device, dtype=audio_data.dtype)
+    mel = magnitude.transpose(1, 2) @ mel_basis.T
+    return mel.transpose(1, 2)[0].cpu().numpy()
+
+
 def compute_condition_number(latents):
     """
     Compute condition number of latent covariance matrix.
@@ -288,12 +311,12 @@ def compute_locality_curve(model, signal, latents_orig, window_before=10, window
     
     # Compute baseline reconstruction
     with torch.no_grad():
-        mel_recons = AudioSignal(
-            model.decode(latents_orig), 
-            sample_rate=signal.sample_rate
-        ).mel_spectrogram(
-            n_mels=n_mels, window_length=hop_length, hop_length=hop_length
-        ).squeeze().cpu().numpy()
+        mel_recons = _block_aligned_mel_spectrogram(
+            model.decode(latents_orig),
+            sample_rate=signal.sample_rate,
+            n_mels=n_mels,
+            hop_length=hop_length,
+        )
     
     # Compute covariance for perturbations
     _, cov_matrix, eigenvals, eigenvecs = compute_condition_number(latents_orig)
@@ -333,12 +356,12 @@ def compute_locality_curve(model, signal, latents_orig, window_before=10, window
             audio_batch = model.decode(latents_batch)
         
         for i, pos in enumerate(batch_positions):
-            mel_pert = AudioSignal(
-                audio_batch[i:i+1], 
-                sample_rate=signal.sample_rate
-            ).mel_spectrogram(
-                n_mels=n_mels, window_length=hop_length, hop_length=hop_length
-            ).squeeze().cpu().numpy()
+            mel_pert = _block_aligned_mel_spectrogram(
+                audio_batch[i:i+1],
+                sample_rate=signal.sample_rate,
+                n_mels=n_mels,
+                hop_length=hop_length,
+            )
             
             for j, rel_dist in enumerate(relative_distances):
                 mel_frame_idx = int(np.round((pos + rel_dist) * np.prod(encoder_strides) / hop_length))
