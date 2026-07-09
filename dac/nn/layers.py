@@ -6,10 +6,11 @@ from torch.nn.utils import weight_norm
 
 
 class RMSNorm(nn.Module):
-    """Root Mean Square Layer Normalization for 1D convolutions.
-    
-    Applies RMS normalization over the channel dimension for 1D conv features.
-    Input shape: [B, C, T] where B=batch, C=channels, T=time
+    """Power-aware RMS normalization for 1D convolution features.
+
+    Channel 0 is treated as a power channel: it only receives a learnable scale.
+    Channels 1: are RMS-normalized together and scaled independently.
+    Input shape: [B, C, T] where B=batch, C=channels, T=time.
     """
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
@@ -17,8 +18,14 @@ class RMSNorm(nn.Module):
         self.eps = eps
     
     def forward(self, x):
-        # Normalize and scale
-        return self.scale * x * torch.rsqrt(x.pow(2).mean(dim=1, keepdim=True) + self.eps)
+        power = x[:, :1, :] * self.scale[:, :1, :]
+        content = x[:, 1:, :]
+        if content.shape[1] == 0:
+            return power
+
+        content = content * torch.rsqrt(content.pow(2).mean(dim=1, keepdim=True) + self.eps)
+        content = content * self.scale[:, 1:, :]
+        return torch.cat([power, content], dim=1)
 
 
 class PaddedConv1d(nn.Module):
