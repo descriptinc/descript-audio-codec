@@ -727,13 +727,15 @@ def save_samples(state, val_idx):
         with state.ema.average_parameters(accel.unwrap(state.generator)):
             out = state.generator(signal.audio_data, signal.sample_rate)
             # Also get latents for evaluation
-            latents = accel.unwrap(state.generator).encode(signal.audio_data)
+            audio_data = accel.unwrap(state.generator).preprocess(signal.audio_data, signal.sample_rate)
+            latents = accel.unwrap(state.generator).encode(audio_data)
             if isinstance(latents, tuple):
                 latents = latents[0]
     else:
         out = state.generator(signal.audio_data, signal.sample_rate)
         # Also get latents for evaluation
-        latents = accel.unwrap(state.generator).encode(signal.audio_data)
+        audio_data = accel.unwrap(state.generator).preprocess(signal.audio_data, signal.sample_rate)
+        latents = accel.unwrap(state.generator).encode(audio_data)
         if isinstance(latents, tuple):
             latents = latents[0]
     recons = AudioSignal(out["audio"], signal.sample_rate)

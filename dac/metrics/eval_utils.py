@@ -91,6 +91,7 @@ def compute_power_channel_gain_response(model, signal, gain_db_values=None):
     gain_db_tensor = torch.tensor(gain_db_values, device=device, dtype=signal.audio_data.dtype)
     gains = 10 ** (gain_db_tensor / 20)
     audio_batch = signal.audio_data.repeat(len(gain_db_values), 1, 1) * gains[:, None, None]
+    audio_batch = model.preprocess(audio_batch, signal.sample_rate)
     latents = model.encode(audio_batch)
     if isinstance(latents, tuple):
         latents = latents[0]
