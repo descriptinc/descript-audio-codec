@@ -1,6 +1,11 @@
 import os
 import sys
 import warnings
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 # Monkey patch torch.load to handle PyTorch 2.6's weights_only default
 import torch
@@ -13,7 +18,6 @@ def _patched_torch_load(*args, **kwargs):
 torch.load = _patched_torch_load
 
 from dataclasses import dataclass
-from pathlib import Path
 
 import argbind
 import torch
