@@ -81,6 +81,71 @@ def compute_condition_number(latents):
     return cond_number, cov_matrix, eigenvals, eigenvecs
 
 
+@torch.no_grad()
+def compute_power_channel_gain_response(model, signal, gain_db_values=None):
+    """Measure latent response to per-sample global gain changes used in training."""
+    if gain_db_values is None:
+        gain_db_values = np.linspace(-6.0, 6.0, 13)
+
+    device = signal.audio_data.device
+    gain_db_tensor = torch.tensor(gain_db_values, device=device, dtype=signal.audio_data.dtype)
+    gains = 10 ** (gain_db_tensor / 20)
+    audio_batch = signal.audio_data.repeat(len(gain_db_values), 1, 1) * gains[:, None, None]
+    latents = model.encode(audio_batch)
+    if isinstance(latents, tuple):
+        latents = latents[0]
+
+    baseline_idx = int(np.argmin(np.abs(np.asarray(gain_db_values, dtype=float))))
+    baseline_content = latents[baseline_idx:baseline_idx + 1, 1:, :]
+    content_mse = (latents[:, 1:, :] - baseline_content).pow(2).mean(dim=(1, 2))
+    power_mean = latents[:, 0, :].mean(dim=1)
+    power_std = latents[:, 0, :].std(dim=1)
+
+    return (
+        np.asarray(gain_db_values, dtype=float),
+        power_mean.detach().cpu().numpy(),
+        power_std.detach().cpu().numpy(),
+        content_mse.detach().cpu().numpy(),
+    )
+
+
+def visualize_power_channel_gain_response(gain_db, power_mean, power_std, content_mse, output_path=None):
+    """Visualize channel 0 response and content-channel invariance under global gain."""
+    gain_db = np.asarray(gain_db, dtype=float)
+    power_mean = np.asarray(power_mean, dtype=float)
+    power_std = np.asarray(power_std, dtype=float)
+    content_mse = np.asarray(content_mse, dtype=float)
+
+    valid = np.isfinite(gain_db) & np.isfinite(power_mean)
+    corr = float("nan")
+    if valid.sum() > 1 and gain_db[valid].std() > 0 and power_mean[valid].std() > 0:
+        corr = float(np.corrcoef(gain_db[valid], power_mean[valid])[0, 1])
+
+    fig, (ax_power, ax_content) = plt.subplots(2, 1, figsize=(7, 8), sharex=True)
+    ax_power.errorbar(gain_db, power_mean, yerr=power_std, marker="o", linewidth=2, capsize=3)
+    if valid.sum() > 1:
+        slope, intercept = np.polyfit(gain_db[valid], power_mean[valid], 1)
+        x_line = np.linspace(gain_db[valid].min(), gain_db[valid].max(), 100)
+        ax_power.plot(x_line, slope * x_line + intercept, color="red", linestyle="--")
+    ax_power.set_ylabel("Mean Latent Channel 0")
+    ax_power.set_title(f"Power Channel Gain Response\nPearson r = {corr:.3f}")
+    ax_power.grid(True, alpha=0.3)
+
+    ax_content.plot(gain_db, content_mse, marker="o", linewidth=2)
+    ax_content.set_xlabel("Applied Global Gain [dB]")
+    ax_content.set_ylabel("MSE vs 0 dB Latent Channels 1:")
+    ax_content.set_title("Content Channel Gain Invariance")
+    ax_content.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+    if output_path:
+        plt.savefig(output_path, format='svg' if str(output_path).endswith('.svg') else 'png', dpi=150)
+        plt.close()
+        return None
+    else:
+        return fig
+
+
 def visualize_latents_with_pca(signal, latents, n_components=64, perform_pca=True, 
                                output_path=None, n_mels=64, hop_length=2048):
     """
@@ -439,8 +504,18 @@ def save_evaluation_plots_to_wandb(model, signal, latents, step=0, prefix="eval"
             f"{prefix}/covariance": wandb.Image(str(cov_plot_path)),
             f"{prefix}/condition_number": cond_number
         }, step=step)
+
+        # 3. Power channel response to the global gain augmentation used in training
+        gain_db, power_mean, power_std, content_mse = compute_power_channel_gain_response(
+            model, signal
+        )
+        power_plot_path = temp_dir / "power_channel_gain_response.png"
+        visualize_power_channel_gain_response(
+            gain_db, power_mean, power_std, content_mse, output_path=power_plot_path
+        )
+        wandb.log({f"{prefix}/power_channel_gain_response": wandb.Image(str(power_plot_path))}, step=step)
         
-        # 3. Smoothness curve
+        # 4. Smoothness curve
         perturbation_magnitudes = np.logspace(-2, 0, 20)  # Fewer points for speed
         mcd_errors, baseline_mcd = compute_smoothness_curve(
             model, signal, latents, perturbation_magnitudes
@@ -453,7 +528,7 @@ def save_evaluation_plots_to_wandb(model, signal, latents, step=0, prefix="eval"
             f"{prefix}/baseline_mcd": baseline_mcd
         }, step=step)
         
-        # 4. Locality curve
+        # 5. Locality curve
         relative_times, mcd_values = compute_locality_curve(
             model, signal, latents, window_before=5, window_after=5  # Smaller window for speed
         )

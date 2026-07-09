@@ -10,9 +10,11 @@ from tqdm import tqdm
 
 from dac.metrics.eval_utils import (
     compute_condition_number,
+    compute_power_channel_gain_response,
     compute_smoothness_curve,
     compute_locality_curve,
     visualize_covariance_matrix,
+    visualize_power_channel_gain_response,
     visualize_smoothness_curve,
     visualize_locality_curve,
 )
@@ -75,6 +77,10 @@ def analyze_latent_perturbations(
     # Aggregation containers
     baseline_mcd_list = []
     cond_number_list = []
+    power_gain_db = None
+    power_mean_list = []
+    power_std_list = []
+    content_mse_list = []
     cov_accum = None
 
     perturbation_magnitudes = np.logspace(-1, 0, 100)
@@ -106,6 +112,14 @@ def analyze_latent_perturbations(
         # Compute condition number and covariance for this file
         cond_number, cov_matrix, eigenvals, eigenvecs = compute_condition_number(latents_orig)
         cond_number_list.append(cond_number)
+
+        gain_db, power_mean, power_std, content_mse = compute_power_channel_gain_response(
+            model, signal
+        )
+        power_gain_db = gain_db
+        power_mean_list.append(power_mean)
+        power_std_list.append(power_std)
+        content_mse_list.append(content_mse)
         
         # Accumulate normalized covariance
         cov_normalized = cov_matrix / np.trace(cov_matrix) * cov_matrix.shape[0]
@@ -166,11 +180,23 @@ def analyze_latent_perturbations(
     baseline_mean, baseline_ci = _mean_ci(baseline_mcd_list)
     smoothness_mean = smoothness_sum / max(smoothness_count, 1)
     locality_mean = locality_sum / max(locality_count, 1)
+    power_mean = np.mean(power_mean_list, axis=0) if power_mean_list else np.array([])
+    power_std = np.mean(power_std_list, axis=0) if power_std_list else np.array([])
+    content_mse = np.mean(content_mse_list, axis=0) if content_mse_list else np.array([])
     
     # Plot mean covariance matrix
     visualize_covariance_matrix(
         cov_mean, cond_mean,
         output_path=output_dir / f"covariance_{model_path.name}_aggregate.png"
+    )
+
+    # Plot power channel response to global gain changes
+    visualize_power_channel_gain_response(
+        power_gain_db if power_gain_db is not None else np.array([]),
+        power_mean,
+        power_std,
+        content_mse,
+        output_path=output_dir / f"power_channel_gain_response_{model_path.name}_aggregate.png"
     )
     
     # Plot smoothness curve
