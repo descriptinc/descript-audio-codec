@@ -32,7 +32,7 @@ def match_residual_shape(x: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         residual = x
 
     elif target_channels % C == 0:
-        residual = repeat(x, "b c t -> b (r c) t", r=target_channels // C)
+        residual = repeat(x, "b c t -> b (c r) t", r=target_channels // C)
 
     elif C % target_channels == 0:
         residual = rearrange(x, "b (c g) t -> b c g t", c=target_channels).mean(dim=2)
