@@ -610,7 +610,13 @@ def train_loop(state, batch, accel, lambdas):
         p.requires_grad_(False)
 
     with autocast_ctx:
-        output["latents/loss"] = state.l2_latents(out["z_clean"])
+        if accel.unwrap(state.generator).power_channel:
+            output["latents/loss"] = (
+                state.l2_latents(out["z_clean"][:, 1:, :])
+                + 0.01 * state.l2_latents(out["z_clean"][:, :1, :])
+            )
+        else:
+            output["latents/loss"] = state.l2_latents(out["z_clean"])
         gen_loss, feat_loss = state.gan_loss.generator_loss(recons, signal)
         output["adv/gen_loss"] = gen_loss
         output["adv/feat_loss"] = feat_loss

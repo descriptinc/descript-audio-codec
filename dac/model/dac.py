@@ -520,8 +520,13 @@ class DAC(BaseModel, CodecMixin):
                 # No augmentation, use clean latents
                 z_augmented = z_clean
             
-            # Add Gaussian noise with random std between 0 and latent_noise_max
-            z = z_clean + torch.randn_like(z_clean) * torch.rand(z_clean.shape[0], 1, 1, device=z_clean.device) * self.latent_noise_max
+            # Add Gaussian noise with random std between 0 and latent_noise_max.
+            # The power side-channel is cleaner conditioning, so it gets 1% noise.
+            noise_std = torch.rand(z_clean.shape[0], 1, 1, device=z_clean.device) * self.latent_noise_max
+            noise = torch.randn_like(z_clean) * noise_std
+            if self.power_channel:
+                noise[:, :1, :] *= 0.01
+            z = z_clean + noise
             
             # Apply progressive channel dropout if structured_latent is enabled (DC-AE 1.5 style)
             if self.structured_latent:
