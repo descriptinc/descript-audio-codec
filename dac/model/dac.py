@@ -327,10 +327,10 @@ class WavLMDecoder(nn.Module):
         # Apply final conv
         out = self.final_conv(features)
         
-        if self.use_residual:
-            # Add residual connection for final conv
-            residual = features
-            out = out + residual
+        if self.use_residual and out.shape == features.shape:
+            # The WavLM target has a fixed channel count; only use the
+            # parameter-free residual when the decoder width lands on it.
+            out = out + features
         
         return out
 

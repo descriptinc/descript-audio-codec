@@ -1,10 +1,10 @@
 # Model setup
 DAC.sample_rate: 44100
-DAC.encoder_dim: 128
+DAC.encoder_dim: 120
 DAC.encoder_strides: [4, 8, 8, 8]
 DAC.encoder_multipliers: [2, 2, 2, 2]
-DAC.latent_dim: 64
-DAC.decoder_dim: 2048
+DAC.latent_dim: 96
+DAC.decoder_dim: 1920
 DAC.decoder_strides: [8, 8, 8, 4]
 DAC.decoder_multipliers: [2, 2, 2, 2]
 DAC.wavlm_decoder_strides: [2]
